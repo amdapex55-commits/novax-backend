@@ -1,0 +1,251 @@
+// Nova X Logistics - core schema (Phase 1: auth + users)
+// Trip, Delivery, LedgerEntry, Rating models get added in Phase 2 (see README).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  RIDER
+  DRIVER
+  ADMIN
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id          String    @id @default(uuid())
+  phone       String    @unique
+  name        String?
+  role        Role      @default(RIDER)
+  kycStatus   KycStatus @default(PENDING)
+  rating      Float     @default(5.0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  otpCodes      OtpCode[]
+  refreshTokens RefreshToken[]
+  driverProfile DriverProfile?
+  tripsAsRider  Trip[]         @relation("RiderTrips")
+  tripsAsDriver Trip[]         @relation("DriverTrips")
+  deliveriesAsSender Delivery[] @relation("SenderDeliveries")
+  deliveriesAsDriver Delivery[] @relation("DriverDeliveries")
+  ledgerEntries LedgerEntry[]
+  ratingsGiven    Rating[] @relation("RatingsGiven")
+  ratingsReceived Rating[] @relation("RatingsReceived")
+
+  @@map("users")
+}
+
+// Extra fields only relevant when role = DRIVER.
+// Kept as a separate table so the `users` table stays lean for riders.
+model DriverProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType   String   // "bike" | "rickshaw" | "car"
+  vehiclePlate  String?
+  cnicNumber    String?
+  licenseDocUrl String?  // Cloudflare R2 object URL
+  isOnline      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("driver_profiles")
+}
+
+enum TripStatus {
+  REQUESTED     // rider submitted the request, no driver matched yet
+  MATCHING      // a driver has been offered the trip, awaiting accept/decline
+  MATCHED       // driver accepted, en route to pickup
+  IN_PROGRESS   // passenger/parcel picked up, trip underway
+  COMPLETED
+  CANCELLED
+}
+
+enum FareType {
+  FIXED
+  BID
+}
+
+enum VehicleType {
+  BIKE
+  RICKSHAW
+  CAR
+}
+
+model Trip {
+  id          String     @id @default(uuid())
+  riderId     String
+  rider       User       @relation("RiderTrips", fields: [riderId], references: [id])
+  driverId    String?
+  driver      User?      @relation("DriverTrips", fields: [driverId], references: [id])
+
+  status      TripStatus @default(REQUESTED)
+  vehicleType VehicleType
+  fareType    FareType   @default(FIXED)
+
+  pickupLat   Float
+  pickupLng   Float
+  dropoffLat  Float
+  dropoffLng  Float
+
+  distanceKm  Float?
+  fare        Float?     // final agreed fare (PKR)
+  offeredFare Float?     // rider's bid, when fareType = BID
+
+  requestedAt DateTime   @default(now())
+  matchedAt   DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  ledgerEntries LedgerEntry[]
+  rating        Rating?
+
+  @@index([riderId])
+  @@index([driverId])
+  @@index([status])
+  @@map("trips")
+}
+
+enum DeliveryStatus {
+  REQUESTED
+  MATCHING
+  MATCHED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+model Delivery {
+  id             String         @id @default(uuid())
+  senderId       String
+  sender         User           @relation("SenderDeliveries", fields: [senderId], references: [id])
+  driverId       String?
+  driver         User?          @relation("DriverDeliveries", fields: [driverId], references: [id])
+
+  status         DeliveryStatus @default(REQUESTED)
+
+  pickupLat      Float
+  pickupLng      Float
+  dropoffLat     Float
+  dropoffLng     Float
+
+  recipientName  String
+  recipientPhone String
+  parcelNote     String?
+
+  codAmount      Float?   // cash the driver collects from the recipient on the sender's behalf; null = no COD
+  fare           Float?   // delivery fee charged to the sender
+  distanceKm     Float?
+
+  proofOfDeliveryUrl String? // Cloudflare R2 object URL — set from the Uploads module's presigned-upload flow
+
+  requestedAt    DateTime  @default(now())
+  matchedAt      DateTime?
+  pickedUpAt     DateTime?
+  deliveredAt    DateTime?
+  cancelledAt    DateTime?
+
+  ledgerEntries LedgerEntry[]
+  rating        Rating?
+
+  @@index([senderId])
+  @@index([driverId])
+  @@index([status])
+  @@map("deliveries")
+}
+
+enum LedgerEntryType {
+  TRIP_PAYOUT
+  DELIVERY_PAYOUT
+  DELIVERY_COD_LIABILITY // cash the driver is now holding on the platform's behalf, owed back
+}
+
+// Not strict double-entry (no separate "platform" account to balance
+// against) — a per-user running ledger of what the platform owes the driver
+// and what the driver owes back (COD cash collected). Good enough to answer
+// "what do we owe this driver right now" without inventing a fictitious
+// system account. Revisit if/when a real accounting requirement shows up.
+model LedgerEntry {
+  id               String          @id @default(uuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id])
+  type             LedgerEntryType
+
+  grossAmount      Float           // full fare/delivery fee before commission
+  commissionRate   Float?
+  commissionAmount Float?
+  netAmount        Float           // signed: positive = owed to the driver, negative = driver owes the platform
+
+  tripId           String?
+  trip             Trip?           @relation(fields: [tripId], references: [id])
+  deliveryId       String?
+  delivery         Delivery?       @relation(fields: [deliveryId], references: [id])
+
+  createdAt        DateTime        @default(now())
+
+  @@index([userId])
+  @@map("ledger_entries")
+}
+
+model Rating {
+  id         String    @id @default(uuid())
+  tripId     String?   @unique
+  trip       Trip?     @relation(fields: [tripId], references: [id])
+  deliveryId String?   @unique
+  delivery   Delivery? @relation(fields: [deliveryId], references: [id])
+
+  raterId    String
+  rater      User      @relation("RatingsGiven", fields: [raterId], references: [id])
+  rateeId    String
+  ratee      User      @relation("RatingsReceived", fields: [rateeId], references: [id])
+
+  score      Int       // 1-5
+  comment    String?
+
+  createdAt  DateTime  @default(now())
+
+  @@index([rateeId])
+  @@map("ratings")
+}
+
+// One-time codes for phone login. Short-lived, checked and deleted on verify.
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  expiresAt DateTime
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("otp_codes")
+}
+
+// Refresh tokens stored hashed so a leaked DB doesn't hand out live sessions.
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
