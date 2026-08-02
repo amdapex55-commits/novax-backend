@@ -14,6 +14,7 @@ enum Role {
   RIDER
   DRIVER
   ADMIN
+  RESTAURANT // owns/manages one Restaurant storefront (see Restaurant model)
 }
 
 enum KycStatus {
@@ -33,6 +34,18 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  // Loyalty & referrals — every user gets a referral code so they can refer
+  // others regardless of role; points accrue from completed trips/deliveries
+  // (see LoyaltyService) and referral bonuses. referralCode is nullable +
+  // backfilled lazily (LoyaltyService.ensureReferralCode) rather than
+  // required, so `prisma db push` doesn't choke adding a NOT NULL unique
+  // column to a table that already has real rows in it from testing.
+  loyaltyPoints Int      @default(0)
+  referralCode  String?  @unique
+  referredById  String?
+  referredBy    User?    @relation("Referrals", fields: [referredById], references: [id])
+  referrals     User[]   @relation("Referrals")
+
   otpCodes      OtpCode[]
   refreshTokens RefreshToken[]
   driverProfile DriverProfile?
@@ -43,8 +56,66 @@ model User {
   ledgerEntries LedgerEntry[]
   ratingsGiven    Rating[] @relation("RatingsGiven")
   ratingsReceived Rating[] @relation("RatingsReceived")
+  notifications   Notification[]
+  supportTickets  SupportTicket[]
+
+  // Tri-modal (Food / Bike / Taxi) additions
+  restaurant             Restaurant?
+  foodOrdersAsCustomer   FoodOrder[] @relation("FoodOrdersAsCustomer")
+  foodOrdersAsDriver     FoodOrder[] @relation("FoodOrdersAsDriver")
+  errandsAsRequester     Errand[]    @relation("ErrandsAsRequester")
+  errandsAsDriver        Errand[]    @relation("ErrandsAsDriver")
 
   @@map("users")
+}
+
+// One row per push-style in-app notification (KYC approved, referral bonus
+// credited, etc.). Polled by the app on screen-open — no realtime channel
+// needed for this, unlike trip/delivery status which already has sockets.
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+// Rider/driver-submitted help requests. No live chat backend exists (that's
+// a real realtime feature, not a copy change) — this is the honest
+// functional version: a real ticket lands in the database and can be
+// actioned, instead of a chat UI that doesn't go anywhere.
+model SupportTicket {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  message   String
+  status    String   @default("OPEN") // OPEN | RESOLVED
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("support_tickets")
+}
+
+// "Nova X for Business" interest form. No corporate-account system exists
+// yet (multi-user billing, invoicing — a real product scope, not a
+// weekend feature) so this captures the lead for manual follow-up instead
+// of pretending a self-serve corporate dashboard exists.
+model BusinessLead {
+  id          String   @id @default(uuid())
+  companyName String
+  contactName String
+  phone       String
+  email       String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@map("business_leads")
 }
 
 // Extra fields only relevant when role = DRIVER.
@@ -58,9 +129,21 @@ model DriverProfile {
   cnicNumber    String?
   licenseDocUrl String?  // Cloudflare R2 object URL
   isOnline      Boolean  @default(false)
+
+  // Dual-mode toggle: a driver only ever receives offers from ONE queue at a
+  // time — "RIDE" (Bike/Taxi trip + parcel matching) or "FOOD_ERRAND" (food
+  // delivery + buy-for-me matching). Switching is a single tap in the app;
+  // kept as a plain string (not an enum) so a 3rd mode can be added later
+  // without a migration.
+  activeMode    String   @default("RIDE") // "RIDE" | "FOOD_ERRAND"
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // findNearbyDriversForMode (location.service.ts) filters DriverProfile by
+  // exactly these two columns after the Redis geo lookup narrows candidates
+  // by distance — this index serves that filter directly.
+  @@index([isOnline, activeMode])
   @@map("driver_profiles")
 }
 
@@ -101,8 +184,12 @@ model Trip {
   dropoffLng  Float
 
   distanceKm  Float?
-  fare        Float?     // final agreed fare (PKR)
-  offeredFare Float?     // rider's bid, when fareType = BID
+  // Money fields use Decimal, not Float — binary floating point can't
+  // represent PKR amounts exactly (0.1 + 0.2 !== 0.3), and that drift
+  // compounds across ledger entries. Decimal(10,2) is exact and still plain
+  // JS numbers in and out at every call site (Number(trip.fare) on read).
+  fare        Decimal?   @db.Decimal(10, 2) // final agreed fare (PKR)
+  offeredFare Decimal?   @db.Decimal(10, 2) // rider's bid, when fareType = BID
 
   requestedAt DateTime   @default(now())
   matchedAt   DateTime?
@@ -116,6 +203,12 @@ model Trip {
   @@index([riderId])
   @@index([driverId])
   @@index([status])
+  // Dispatch's hot query: "REQUESTED trips of vehicleType X" when matching a
+  // driver, and "this driver's MATCHING/MATCHED trip" on the offer/progress
+  // screens — both filter status alongside a second column, which a
+  // single-column index on status alone doesn't serve well.
+  @@index([status, vehicleType])
+  @@index([driverId, status])
   @@map("trips")
 }
 
@@ -147,8 +240,8 @@ model Delivery {
   recipientPhone String
   parcelNote     String?
 
-  codAmount      Float?   // cash the driver collects from the recipient on the sender's behalf; null = no COD
-  fare           Float?   // delivery fee charged to the sender
+  codAmount      Decimal? @db.Decimal(10, 2) // cash the driver collects from the recipient on the sender's behalf; null = no COD
+  fare           Decimal? @db.Decimal(10, 2) // delivery fee charged to the sender
   distanceKm     Float?
 
   proofOfDeliveryUrl String? // Cloudflare R2 object URL — set from the Uploads module's presigned-upload flow
@@ -172,6 +265,10 @@ enum LedgerEntryType {
   TRIP_PAYOUT
   DELIVERY_PAYOUT
   DELIVERY_COD_LIABILITY // cash the driver is now holding on the platform's behalf, owed back
+  WALLET_TOPUP // rider (or driver) adding funds to their in-app balance
+  FOOD_ORDER_DRIVER_PAYOUT   // delivery fee owed to the driver for a food order
+  FOOD_ORDER_RESTAURANT_PAYOUT // items total minus platform commission, owed to the restaurant
+  ERRAND_PAYOUT // service fee owed to the driver for a buy-for-me errand
 }
 
 // Not strict double-entry (no separate "platform" account to balance
@@ -185,15 +282,19 @@ model LedgerEntry {
   user             User            @relation(fields: [userId], references: [id])
   type             LedgerEntryType
 
-  grossAmount      Float           // full fare/delivery fee before commission
-  commissionRate   Float?
-  commissionAmount Float?
-  netAmount        Float           // signed: positive = owed to the driver, negative = driver owes the platform
+  grossAmount      Decimal         @db.Decimal(10, 2) // full fare/delivery fee before commission
+  commissionRate   Float?          // a ratio (0-1), not currency — Float is fine here, no precision-drift risk
+  commissionAmount Decimal?        @db.Decimal(10, 2)
+  netAmount        Decimal         @db.Decimal(10, 2) // signed: positive = owed to the driver, negative = driver owes the platform
 
   tripId           String?
   trip             Trip?           @relation(fields: [tripId], references: [id])
   deliveryId       String?
   delivery         Delivery?       @relation(fields: [deliveryId], references: [id])
+  foodOrderId      String?
+  foodOrder        FoodOrder?      @relation(fields: [foodOrderId], references: [id])
+  errandId         String?
+  errand           Errand?         @relation(fields: [errandId], references: [id])
 
   createdAt        DateTime        @default(now())
 
@@ -207,6 +308,8 @@ model Rating {
   trip       Trip?     @relation(fields: [tripId], references: [id])
   deliveryId String?   @unique
   delivery   Delivery? @relation(fields: [deliveryId], references: [id])
+  foodOrderId String?  @unique
+  foodOrder   FoodOrder? @relation(fields: [foodOrderId], references: [id])
 
   raterId    String
   rater      User      @relation("RatingsGiven", fields: [raterId], references: [id])
@@ -248,4 +351,185 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// ============================================================================
+// Tri-modal expansion: Food delivery + "Pick & Deliver to Me" errands.
+// Bike/Taxi rides reuse the existing Trip model (vehicleType already covers
+// BIKE/RICKSHAW/CAR); Food and Errand are genuinely different domain shapes
+// (multi-item cart, a restaurant-side actor, a shopping list) so they get
+// their own models rather than being force-fit into Trip/Delivery.
+// ============================================================================
+
+enum RestaurantStatus {
+  PENDING   // submitted by owner, awaiting admin approval
+  APPROVED
+  SUSPENDED
+}
+
+// One row per restaurant storefront. Owner is a User with role = RESTAURANT.
+model Restaurant {
+  id             String           @id @default(uuid())
+  ownerId        String           @unique
+  owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name           String
+  description    String?
+  logoUrl        String?          // Cloudflare R2 object URL
+  bannerUrl      String?          // Cloudflare R2 object URL
+  address        String
+  lat            Float
+  lng            Float
+  cuisineTags    String[]         @default([])
+
+  status         RestaurantStatus @default(PENDING)
+  isOpen         Boolean          @default(false) // owner-controlled "accepting orders" toggle
+  commissionRate Float            @default(0.20)  // platform cut of itemsTotal
+  rating         Float            @default(5.0)
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  menuItems      MenuItem[]
+  foodOrders     FoodOrder[]
+
+  @@map("restaurants")
+}
+
+model MenuItem {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String?
+  price        Decimal    @db.Decimal(10, 2)
+  imageUrl     String?
+  category     String     @default("Menu")
+  isAvailable  Boolean    @default(true)
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  orderItems   FoodOrderItem[]
+
+  @@index([restaurantId])
+  @@map("menu_items")
+}
+
+enum FoodOrderStatus {
+  PLACED     // customer submitted, awaiting restaurant accept
+  ACCEPTED   // restaurant accepted, preparing
+  READY      // food ready, no driver assigned yet
+  MATCHING   // system is actively offering to nearby FOOD_ERRAND-mode drivers
+  ASSIGNED   // a driver accepted the offer, en route to the restaurant
+  PICKED_UP  // driver has the order, en route to customer
+  DELIVERED
+  CANCELLED
+}
+
+model FoodOrder {
+  id           String          @id @default(uuid())
+  customerId   String
+  customer     User            @relation("FoodOrdersAsCustomer", fields: [customerId], references: [id])
+  restaurantId String
+  restaurant   Restaurant      @relation(fields: [restaurantId], references: [id])
+  driverId     String?
+  driver       User?           @relation("FoodOrdersAsDriver", fields: [driverId], references: [id])
+
+  status       FoodOrderStatus @default(PLACED)
+  items        FoodOrderItem[]
+
+  dropoffLabel String
+  dropoffLat   Float
+  dropoffLng   Float
+  notes        String?
+
+  itemsTotal   Decimal         @db.Decimal(10, 2)
+  deliveryFee  Decimal         @db.Decimal(10, 2)
+  total        Decimal         @db.Decimal(10, 2)
+
+  placedAt     DateTime        @default(now())
+  acceptedAt   DateTime?
+  readyAt      DateTime?
+  pickedUpAt   DateTime?
+  deliveredAt  DateTime?
+  cancelledAt  DateTime?
+
+  ledgerEntries LedgerEntry[]
+  rating        Rating?
+
+  @@index([customerId])
+  @@index([restaurantId])
+  @@index([driverId])
+  // The restaurant order-queue screen's actual query shape: "my restaurant's
+  // orders that are still PLACED/ACCEPTED", polled/subscribed continuously —
+  // filtering restaurantId alone means scanning every historical order for
+  // that restaurant on every poll.
+  @@index([restaurantId, status])
+  @@map("food_orders")
+}
+
+// Line items snapshot name/price at order time so later menu edits don't
+// silently rewrite historical orders.
+model FoodOrderItem {
+  id            String    @id @default(uuid())
+  foodOrderId   String
+  foodOrder     FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
+  menuItemId    String
+  menuItem      MenuItem  @relation(fields: [menuItemId], references: [id])
+
+  nameSnapshot  String
+  priceSnapshot Decimal @db.Decimal(10, 2)
+  quantity      Int
+  subtotal      Decimal @db.Decimal(10, 2)
+
+  @@index([foodOrderId])
+  @@map("food_order_items")
+}
+
+enum ErrandStatus {
+  REQUESTED
+  MATCHING
+  ACCEPTED
+  SHOPPING
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+// "Pick & Deliver to Me" — buy-for-me errand. Requester describes what they
+// need and a budget; a FOOD_ERRAND-mode driver accepts, shops, and delivers.
+model Errand {
+  id               String       @id @default(uuid())
+  requesterId      String
+  requester        User         @relation("ErrandsAsRequester", fields: [requesterId], references: [id])
+  driverId         String?
+  driver           User?        @relation("ErrandsAsDriver", fields: [driverId], references: [id])
+
+  status           ErrandStatus @default(REQUESTED)
+
+  storeLabel       String
+  storeLat         Float
+  storeLng         Float
+  dropoffLabel     String
+  dropoffLat       Float
+  dropoffLng       Float
+
+  itemsDescription String       // free-text shopping list
+  estimatedBudget  Decimal      @db.Decimal(10, 2)
+  actualSpend      Decimal?     @db.Decimal(10, 2)
+  serviceFee       Decimal      @db.Decimal(10, 2)
+
+  requestedAt      DateTime     @default(now())
+  acceptedAt       DateTime?
+  deliveredAt      DateTime?
+  cancelledAt      DateTime?
+
+  ledgerEntries    LedgerEntry[]
+
+  @@index([requesterId])
+  @@index([driverId])
+  @@index([status])
+  @@map("errands")
 }
