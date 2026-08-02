@@ -1,9 +1,9 @@
 import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { CurrentUser } from "./current-user.decorator";
 import { LedgerService } from "./ledger.service";
-import { TopUpDto } from "./dto/top-up.dto";
+import { TopUpDto } from "./top-up.dto";
 
 @ApiTags("wallet")
 @ApiBearerAuth()

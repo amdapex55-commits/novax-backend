@@ -1,10 +1,10 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { CurrentUser } from "./current-user.decorator";
 import { UploadsService } from "./uploads.service";
-import { PresignUploadDto } from "./dto/presign-upload.dto";
+import { PresignUploadDto } from "./presign-upload.dto";
 
 @ApiTags("uploads")
 @ApiBearerAuth()

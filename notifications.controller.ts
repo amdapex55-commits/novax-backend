@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Patch, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { CurrentUser } from "./current-user.decorator";
 import { NotificationsService } from "./notifications.service";
 
 @ApiTags("notifications")

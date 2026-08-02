@@ -3,10 +3,10 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcrypt";
 import { randomInt } from "crypto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "./prisma.service";
 import { SmsService } from "./sms.service";
-import { LoyaltyService } from "../loyalty/loyalty.service";
-import { NotificationsService } from "../notifications/notifications.service";
+import { LoyaltyService } from "./loyalty.service";
+import { NotificationsService } from "./notifications.service";
 
 const OTP_TTL_MINUTES = 5;
 const OTP_LENGTH = 6;

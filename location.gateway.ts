@@ -12,7 +12,7 @@ import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { Namespace, Socket } from "socket.io";
 import { LocationService } from "./location.service";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "./prisma.service";
 
 interface AuthedSocket extends Socket {
   userId?: string;

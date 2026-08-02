@@ -1,11 +1,11 @@
 import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { RolesGuard } from "../auth/guards/roles.guard";
-import { Roles } from "../auth/decorators/roles.decorator";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { RolesGuard } from "./roles.guard";
+import { Roles } from "./roles.decorator";
+import { CurrentUser } from "./current-user.decorator";
 import { SupportService } from "./support.service";
-import { CreateTicketDto } from "./dto/create-ticket.dto";
+import { CreateTicketDto } from "./create-ticket.dto";
 
 @ApiTags("support")
 @ApiBearerAuth()

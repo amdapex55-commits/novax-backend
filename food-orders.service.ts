@@ -1,14 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { LocationService } from "../location/location.service";
-import { LocationGateway } from "../location/location.gateway";
-import { ExcludedDriversStore } from "../location/excluded-drivers.store";
-import { LedgerService } from "../ledger/ledger.service";
-import { RatingsService } from "../ratings/ratings.service";
-import { LoyaltyService } from "../loyalty/loyalty.service";
-import { NotificationsService } from "../notifications/notifications.service";
-import { CreateFoodOrderDto } from "./dto/create-food-order.dto";
-import { estimateFare, haversineKm } from "../trips/fare.util";
+import { PrismaService } from "./prisma.service";
+import { LocationService } from "./location.service";
+import { LocationGateway } from "./location.gateway";
+import { ExcludedDriversStore } from "./excluded-drivers.store";
+import { LedgerService } from "./ledger.service";
+import { RatingsService } from "./ratings.service";
+import { LoyaltyService } from "./loyalty.service";
+import { NotificationsService } from "./notifications.service";
+import { CreateFoodOrderDto } from "./create-food-order.dto";
+import { estimateFare, haversineKm } from "./fare.util";
 
 // Same expanding-radius cascade shape as TripsService/DeliveryService, just
 // scoped to drivers currently toggled into FOOD_ERRAND mode.

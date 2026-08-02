@@ -1,10 +1,10 @@
 import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { RolesGuard } from "../auth/guards/roles.guard";
-import { Roles } from "../auth/decorators/roles.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { RolesGuard } from "./roles.guard";
+import { Roles } from "./roles.decorator";
 import { BusinessService } from "./business.service";
-import { CreateLeadDto } from "./dto/create-lead.dto";
+import { CreateLeadDto } from "./create-lead.dto";
 
 @ApiTags("business")
 @Controller("api/v1/business")

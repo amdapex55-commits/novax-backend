@@ -1,12 +1,12 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { RolesGuard } from "../auth/guards/roles.guard";
-import { Roles } from "../auth/decorators/roles.decorator";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { RolesGuard } from "./roles.guard";
+import { Roles } from "./roles.decorator";
+import { CurrentUser } from "./current-user.decorator";
 import { ErrandsService } from "./errands.service";
-import { CreateErrandDto } from "./dto/create-errand.dto";
-import { ReportSpendDto } from "./dto/report-spend.dto";
+import { CreateErrandDto } from "./create-errand.dto";
+import { ReportSpendDto } from "./report-spend.dto";
 
 type ReqUser = { userId: string; role: string };
 

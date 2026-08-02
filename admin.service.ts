@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "./prisma.service";
 
 const ACTIVE_TRIP_STATUSES = ["MATCHING", "MATCHED", "IN_PROGRESS"];
 const ACTIVE_DELIVERY_STATUSES = ["MATCHING", "MATCHED", "PICKED_UP", "IN_TRANSIT"];

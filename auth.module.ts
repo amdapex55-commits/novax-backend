@@ -5,8 +5,8 @@ import { AuthService } from "./auth.service";
 import { AuthController } from "./auth.controller";
 import { SmsService } from "./sms.service";
 import { JwtStrategy } from "./jwt.strategy";
-import { LoyaltyModule } from "../loyalty/loyalty.module";
-import { NotificationsModule } from "../notifications/notifications.module";
+import { LoyaltyModule } from "./loyalty.module";
+import { NotificationsModule } from "./notifications.module";
 
 @Module({
   imports: [PassportModule, JwtModule.register({}), LoyaltyModule, NotificationsModule], // secrets are passed per-call in AuthService

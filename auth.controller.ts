@@ -2,9 +2,9 @@ import { Body, Controller, Post } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
-import { RequestOtpDto } from "./dto/request-otp.dto";
-import { VerifyOtpDto } from "./dto/verify-otp.dto";
-import { RefreshDto } from "./dto/refresh.dto";
+import { RequestOtpDto } from "./request-otp.dto";
+import { VerifyOtpDto } from "./verify-otp.dto";
+import { RefreshDto } from "./refresh.dto";
 
 @ApiTags("auth")
 @Controller("api/v1/auth")

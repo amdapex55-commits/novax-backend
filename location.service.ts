@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { RedisService } from "../redis/redis.service";
-import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "./redis.service";
+import { PrismaService } from "./prisma.service";
 
 export interface NearbyDriver {
   driverId: string;

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { RedisService } from "../redis/redis.service";
+import { RedisService } from "./redis.service";
 
 // Replaces the in-memory Map<string, Set<string>> that used to live inside
 // TripsService/DeliveryService — that worked for one process but silently

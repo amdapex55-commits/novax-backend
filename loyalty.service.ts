@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { randomInt } from "crypto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "./prisma.service";
 
 // No ambiguous chars (0/O, 1/I) — these get read aloud / typed by hand.
 const REFERRAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

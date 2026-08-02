@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { UpdateProfileDto } from "./dto/update-profile.dto";
-import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
-import { NotificationsService } from "../notifications/notifications.service";
-import { SetModeDto } from "./dto/set-mode.dto";
+import { PrismaService } from "./prisma.service";
+import { UpdateProfileDto } from "./update-profile.dto";
+import { UpdateVehicleDto } from "./update-vehicle.dto";
+import { NotificationsService } from "./notifications.service";
+import { SetModeDto } from "./set-mode.dto";
 
 @Injectable()
 export class UsersService {

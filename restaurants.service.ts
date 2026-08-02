@@ -1,8 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { CreateRestaurantDto } from "./dto/create-restaurant.dto";
-import { UpdateRestaurantDto } from "./dto/update-restaurant.dto";
-import { UpsertMenuItemDto } from "./dto/upsert-menu-item.dto";
+import { PrismaService } from "./prisma.service";
+import { CreateRestaurantDto } from "./create-restaurant.dto";
+import { UpdateRestaurantDto } from "./update-restaurant.dto";
+import { UpsertMenuItemDto } from "./upsert-menu-item.dto";
 
 @Injectable()
 export class RestaurantsService {

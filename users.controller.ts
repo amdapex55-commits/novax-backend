@@ -1,13 +1,13 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { RolesGuard } from "../auth/guards/roles.guard";
-import { Roles } from "../auth/decorators/roles.decorator";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtAuthGuard } from "./jwt-auth.guard";
+import { RolesGuard } from "./roles.guard";
+import { Roles } from "./roles.decorator";
+import { CurrentUser } from "./current-user.decorator";
 import { UsersService } from "./users.service";
-import { UpdateProfileDto } from "./dto/update-profile.dto";
-import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
-import { SetModeDto } from "./dto/set-mode.dto";
+import { UpdateProfileDto } from "./update-profile.dto";
+import { UpdateVehicleDto } from "./update-vehicle.dto";
+import { SetModeDto } from "./set-mode.dto";
 
 @ApiTags("users")
 @ApiBearerAuth()

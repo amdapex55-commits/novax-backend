@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
-import { UploadPurpose } from "./dto/presign-upload.dto";
+import { UploadPurpose } from "./presign-upload.dto";
 
 const PRESIGN_TTL_SECONDS = 300; // 5 minutes to actually perform the PUT
 
