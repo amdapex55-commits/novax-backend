@@ -1,8 +1,12 @@
 import { Injectable } from "@nestjs/common";
+import { TripStatus, DeliveryStatus } from "@prisma/client";
 import { PrismaService } from "./prisma.service";
 
-const ACTIVE_TRIP_STATUSES = ["MATCHING", "MATCHED", "IN_PROGRESS"];
-const ACTIVE_DELIVERY_STATUSES = ["MATCHING", "MATCHED", "PICKED_UP", "IN_TRANSIT"];
+// Typed against the real Prisma enums, not plain strings — a bare
+// string[] literal doesn't satisfy Prisma's `status: { in: TripStatus[] }`
+// filter type, which is exactly what broke the build.
+const ACTIVE_TRIP_STATUSES: TripStatus[] = ["MATCHING", "MATCHED", "IN_PROGRESS"];
+const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = ["MATCHING", "MATCHED", "PICKED_UP", "IN_TRANSIT"];
 
 @Injectable()
 export class AdminService {

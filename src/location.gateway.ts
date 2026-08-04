@@ -52,9 +52,15 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       const payload = this.jwt.verify(token, {
         secret: this.config.get<string>("JWT_ACCESS_SECRET"),
       });
-      client.userId = payload.sub;
+      // Narrow to a definite string once, here — client.userId is a mutable
+      // optional property on the socket, so TS won't carry the "just
+      // assigned" narrowing through the await below (property narrowing on
+      // objects doesn't survive across statements/awaits the way a local
+      // const does).
+      const userId: string = payload.sub;
+      client.userId = userId;
       client.role = payload.role;
-      this.logger.log(`Socket connected: user ${client.userId} (${client.role})`);
+      this.logger.log(`Socket connected: user ${userId} (${client.role})`);
 
       // DriverProfile.isOnline is the durable "is this driver actually
       // available" flag food/errand matching filters on (Redis geo
@@ -65,8 +71,8 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       // lazily by the Vehicle screen) — connecting shouldn't 500 on that.
       if (client.role === "DRIVER") {
         await this.prisma.driverProfile.upsert({
-          where: { userId: client.userId },
-          create: { userId: client.userId, vehicleType: "bike", isOnline: true },
+          where: { userId },
+          create: { userId, vehicleType: "bike", isOnline: true },
           update: { isOnline: true },
         });
       }
