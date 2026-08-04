@@ -255,7 +255,13 @@ export class FoodOrdersService {
   }
 
   async getOrder(orderId: string) {
-    return this.prisma.foodOrder.findUnique({ where: { id: orderId }, include: { items: true } });
+    // Includes restaurant (name + pickup lat/lng) so the driver progress
+    // screen can show where to actually go, not just a generic "head to the
+    // restaurant" with no address.
+    return this.prisma.foodOrder.findUnique({
+      where: { id: orderId },
+      include: { items: true, restaurant: { select: { name: true, address: true, lat: true, lng: true } } },
+    });
   }
 
   async listMine(userId: string) {

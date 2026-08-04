@@ -66,7 +66,32 @@ model User {
   errandsAsRequester     Errand[]    @relation("ErrandsAsRequester")
   errandsAsDriver        Errand[]    @relation("ErrandsAsDriver")
 
+  chatMessages ChatMessage[]
+
   @@map("users")
+}
+
+// One thread per "context" (an active Trip, Delivery, FoodOrder, or Errand) —
+// no standalone Conversation model, since a chat here only ever makes sense
+// between the two people already tied together by one of those records, and
+// only for as long as it's relevant. contextType+contextId together are the
+// thread key; ChatService resolves the two allowed participant ids from the
+// underlying record itself (riderId/driverId, customerId/driverId, etc.) on
+// every read/write rather than duplicating them onto this table, so there's
+// exactly one place a reassigned driver or cancelled job is reflected.
+model ChatMessage {
+  id          String   @id @default(uuid())
+  contextType String // "TRIP" | "DELIVERY" | "FOOD_ORDER" | "ERRAND"
+  contextId   String
+  senderId    String
+  sender      User     @relation(fields: [senderId], references: [id])
+  body        String   @db.VarChar(1000)
+  createdAt   DateTime @default(now())
+
+  // Every read is "give me this thread's messages in order" — the one query
+  // shape this table ever serves.
+  @@index([contextType, contextId, createdAt])
+  @@map("chat_messages")
 }
 
 // One row per push-style in-app notification (KYC approved, referral bonus

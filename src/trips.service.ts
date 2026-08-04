@@ -90,12 +90,23 @@ export class TripsService {
   }
 
   private async offerToDriver(tripId: string, driverId: string) {
-    await this.prisma.trip.update({
+    const trip = await this.prisma.trip.update({
       where: { id: tripId },
       data: { status: "MATCHING", driverId },
     });
 
-    this.locationGateway.emitToUser(driverId, "trip:offer", { tripId, expiresInMs: OFFER_TIMEOUT_MS });
+    // Include fare/fareType so the driver can actually see a rider's
+    // proposed price before accepting a BID trip — same info an inDrive
+    // driver sees on an incoming offer. fare is a Decimal column; Number()
+    // before it leaves this function in a socket payload.
+    this.locationGateway.emitToUser(driverId, "trip:offer", {
+      tripId,
+      expiresInMs: OFFER_TIMEOUT_MS,
+      vehicleType: trip.vehicleType,
+      fareType: trip.fareType,
+      fare: trip.fare ? Number(trip.fare) : null,
+      distanceKm: trip.distanceKm,
+    });
 
     // Auto-cascade: if the driver hasn't accepted within the window, treat it
     // like a decline and offer the next-nearest candidate.
