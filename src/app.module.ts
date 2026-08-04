@@ -21,6 +21,8 @@ import { RestaurantsModule } from "./restaurants.module";
 import { FoodOrdersModule } from "./food-orders.module";
 import { ErrandsModule } from "./errands.module";
 import { ChatModule } from "./chat.module";
+import { AnalyticsModule } from "./analytics.module";
+import { SafetyModule } from "./safety.module";
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { ChatModule } from "./chat.module";
     FoodOrdersModule,
     ErrandsModule,
     ChatModule,
+    AnalyticsModule,
+    SafetyModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

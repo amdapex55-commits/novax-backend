@@ -123,11 +123,17 @@ export class LedgerService {
     });
   }
 
-  /** Add funds to a user's own balance. No payment gateway is wired up yet
-   * (that's a real merchant-account integration, not a code change) — this
-   * records a real ledger entry against their real account so the wallet
-   * is genuinely functional end to end today, and is the exact same code
-   * path a real gateway's webhook would call once one exists. */
+  /** ADMIN-ONLY manual credit (see wallet.controller.ts).
+   *
+   * Nova X launches CASH-ONLY: riders pay drivers cash, parcels/food are COD.
+   * There is no consumer top-up, because there's no payment gateway — and an
+   * endpoint that mints balance without one is just free money.
+   *
+   * What this is for: an ops person issuing a refund, a goodwill credit, or
+   * recording a driver payout that was settled outside the app. Every call
+   * is a deliberate human action from the ops dashboard, and lands as a real
+   * ledger row with an audit trail. When a real gateway does get wired up,
+   * its verified webhook becomes a second caller of this same method. */
   async topUp(userId: string, amount: number) {
     return this.prisma.ledgerEntry.create({
       data: {
@@ -158,5 +164,53 @@ export class LedgerService {
       where: { userId },
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  /**
+   * The driver home screen's hero card: what have I made today, and this
+   * week? Drivers open the app to see this number — it deserves a real
+   * query rather than the hardcoded "Rs. 0" the screen used to show.
+   *
+   * Counts payout entries only (positive earnings), not COD liabilities,
+   * which would otherwise make a busy cash day look like a loss.
+   */
+  async getDriverEarnings(userId: string) {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+
+    const PAYOUT_TYPES = [
+      "TRIP_PAYOUT",
+      "DELIVERY_PAYOUT",
+      "FOOD_ORDER_DRIVER_PAYOUT",
+      "ERRAND_PAYOUT",
+    ] as any;
+
+    const [today, week, todayCount, weekCount, balance] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({
+        where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfDay } },
+        _sum: { netAmount: true },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfWeek } },
+        _sum: { netAmount: true },
+      }),
+      this.prisma.ledgerEntry.count({
+        where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfDay } },
+      }),
+      this.prisma.ledgerEntry.count({
+        where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfWeek } },
+      }),
+      this.getBalance(userId),
+    ]);
+
+    return {
+      today: today._sum.netAmount ? Number(today._sum.netAmount) : 0,
+      week: week._sum.netAmount ? Number(week._sum.netAmount) : 0,
+      jobsToday: todayCount,
+      jobsThisWeek: weekCount,
+      balance: balance.balance,
+    };
   }
 }

@@ -150,10 +150,15 @@ export class DeliveryService {
   async markDelivered(deliveryId: string, driverId: string, proofOfDeliveryUrl?: string) {
     const delivery = await this.getDeliveryOr404(deliveryId);
     this.assertDriverOwnsDelivery(delivery, driverId, ["PICKED_UP", "IN_TRANSIT"]);
-    const updated = await this.prisma.delivery.update({
-      where: { id: deliveryId },
+
+    // Conditional transition so a retry can't double-pay — see the same
+    // guard (and reasoning) in TripsService.completeTrip.
+    const claimed = await this.prisma.delivery.updateMany({
+      where: { id: deliveryId, status: { in: ["PICKED_UP", "IN_TRANSIT"] } },
       data: { status: "DELIVERED", deliveredAt: new Date(), proofOfDeliveryUrl },
     });
+    if (claimed.count === 0) return this.getDeliveryOr404(deliveryId);
+    const updated = await this.getDeliveryOr404(deliveryId);
     // delivery.fare/codAmount are Prisma Decimal columns — Number() before
     // they leave this function in a socket payload; the ledger call below
     // passes the Decimal straight through since recordDeliveryPayout does
@@ -195,8 +200,15 @@ export class DeliveryService {
     return updated;
   }
 
-  async getDelivery(deliveryId: string) {
-    return this.getDeliveryOr404(deliveryId);
+  // Ownership-checked — see the same note on TripsService.getTrip: a bare
+  // JWT used to be enough to read any delivery (and its recipient name/
+  // phone/COD amount) by guessing an id.
+  async getDelivery(deliveryId: string, requesterId: string, requesterRole?: string) {
+    const delivery = await this.getDeliveryOr404(deliveryId);
+    if (requesterRole !== "ADMIN" && delivery.senderId !== requesterId && delivery.driverId !== requesterId) {
+      throw new ForbiddenException("Not your delivery");
+    }
+    return delivery;
   }
 
   async listMyDeliveries(userId: string) {

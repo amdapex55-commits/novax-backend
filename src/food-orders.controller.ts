@@ -83,8 +83,8 @@ export class FoodOrdersController {
   }
 
   @Get(":id")
-  getOne(@Param("id") id: string) {
-    return this.foodOrdersService.getOrder(id);
+  getOne(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.foodOrdersService.getOrder(id, user.userId, user.role);
   }
 
   @Get()

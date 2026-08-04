@@ -130,10 +130,15 @@ export class ErrandsService {
   async markDelivered(driverId: string, errandId: string) {
     const errand = await this.getErrandOr404(errandId);
     this.assertDriverOwnsErrand(errand, driverId, ["ON_THE_WAY"]);
-    const updated = await this.prisma.errand.update({
-      where: { id: errandId },
+
+    // Conditional transition so a retry can't double-pay — see
+    // TripsService.completeTrip for the full reasoning.
+    const claimed = await this.prisma.errand.updateMany({
+      where: { id: errandId, status: "ON_THE_WAY" },
       data: { status: "DELIVERED", deliveredAt: new Date() },
     });
+    if (claimed.count === 0) return this.getErrandOr404(errandId);
+    const updated = await this.getErrandOr404(errandId);
     this.locationGateway.emitToUser(errand.requesterId, "errand:delivered", { errandId });
 
     await this.ledgerService.recordErrandPayout(driverId, errandId, errand.serviceFee);
@@ -158,8 +163,13 @@ export class ErrandsService {
     return updated;
   }
 
-  async getErrand(errandId: string) {
-    return this.getErrandOr404(errandId);
+  // Ownership-checked — same IDOR class as trips/deliveries/food orders.
+  async getErrand(errandId: string, requesterId: string, requesterRole?: string) {
+    const errand = await this.getErrandOr404(errandId);
+    if (requesterRole !== "ADMIN" && errand.requesterId !== requesterId && errand.driverId !== requesterId) {
+      throw new ForbiddenException("Not your errand");
+    }
+    return errand;
   }
 
   async listMine(userId: string) {

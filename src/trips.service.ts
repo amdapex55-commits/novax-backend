@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from "@nestjs/common";
+import { randomBytes } from "crypto";
 import { PrismaService } from "./prisma.service";
 import { LocationService } from "./location.service";
 import { LocationGateway } from "./location.gateway";
@@ -169,10 +170,22 @@ export class TripsService {
   async completeTrip(tripId: string, driverId: string) {
     const trip = await this.getTripOr404(tripId);
     this.assertDriverOwnsTrip(trip, driverId, ["IN_PROGRESS"]);
-    const updated = await this.prisma.trip.update({
-      where: { id: tripId },
+
+    // Conditional transition: only flip IN_PROGRESS -> COMPLETED, and only
+    // act if THIS call is the one that actually made the change. Two
+    // concurrent calls (a network retry, an impatient double-tap) both used
+    // to pass the status check above and both write a payout — paying the
+    // driver twice for one trip. updateMany returns a count, so the loser
+    // sees 0 and returns without touching the ledger.
+    const claimed = await this.prisma.trip.updateMany({
+      where: { id: tripId, status: "IN_PROGRESS" },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    if (claimed.count === 0) {
+      // Someone else already completed it — return current state, don't pay again.
+      return this.getTripOr404(tripId);
+    }
+    const updated = await this.getTripOr404(tripId);
     // trip.fare is a Prisma Decimal now (see schema.prisma) — Number() it
     // before it goes anywhere that isn't straight back into another Decimal
     // column, since Socket.IO's JSON payload should carry a real number.
@@ -238,8 +251,90 @@ export class TripsService {
     return updated;
   }
 
-  async getTrip(tripId: string) {
-    return this.getTripOr404(tripId);
+  // requesterId is required, not optional — a JWT alone used to be enough to
+  // read ANY trip by guessing its id (IDOR), exposing another user's pickup/
+  // dropoff coordinates and fare. ADMIN is allowed through for ops tooling.
+  async getTrip(tripId: string, requesterId: string, requesterRole?: string) {
+    const trip = await this.getTripOr404(tripId);
+    if (requesterRole !== "ADMIN" && trip.riderId !== requesterId && trip.driverId !== requesterId) {
+      throw new ForbiddenException("Not your trip");
+    }
+    // Include the other party's identity — the tracking screen shows a
+    // "who is picking you up" trust card (name, rating, plate), which is the
+    // single biggest trust signal in a ride app. Only fields safe for the
+    // counterparty to see; no CNIC, no payout details.
+    const [driver, driverProfile, rider] = await Promise.all([
+      trip.driverId
+        ? this.prisma.user.findUnique({ where: { id: trip.driverId }, select: { name: true, rating: true, phone: true } })
+        : null,
+      trip.driverId
+        ? this.prisma.driverProfile.findUnique({ where: { userId: trip.driverId }, select: { vehicleType: true, vehiclePlate: true } })
+        : null,
+      this.prisma.user.findUnique({ where: { id: trip.riderId }, select: { name: true, rating: true, phone: true } }),
+    ]);
+    return { ...trip, driver, driverProfile, rider };
+  }
+
+  /** Mint (or reuse) the share token for "send my live ride to someone".
+   * Only the rider or the assigned driver can create one. */
+  async createShareLink(tripId: string, requesterId: string) {
+    const trip = await this.getTripOr404(tripId);
+    if (trip.riderId !== requesterId && trip.driverId !== requesterId) {
+      throw new ForbiddenException("Not your trip");
+    }
+    if (trip.shareToken) return { shareToken: trip.shareToken };
+    // 32 hex chars of CSPRNG — not guessable by brute force, and stable for
+    // the life of the trip so a link already sent to family keeps working.
+    const shareToken = randomBytes(16).toString("hex");
+    await this.prisma.trip.update({ where: { id: tripId }, data: { shareToken } });
+    return { shareToken };
+  }
+
+  /** PUBLIC read (no auth) for a shared trip link.
+   *
+   * Minimal projection on purpose: whoever holds this link is an unknown
+   * third party the rider chose to trust with "where am I", not with the
+   * rider's phone number, the driver's full identity, or the fare. Anything
+   * added here is visible to anyone the link is forwarded to. */
+  async getSharedTrip(shareToken: string) {
+    const trip = await this.prisma.trip.findUnique({
+      where: { shareToken },
+      select: {
+        id: true,
+        status: true,
+        vehicleType: true,
+        pickupLat: true,
+        pickupLng: true,
+        dropoffLat: true,
+        dropoffLng: true,
+        matchedAt: true,
+        startedAt: true,
+        completedAt: true,
+        driver: { select: { name: true, rating: true } },
+        rider: { select: { name: true } },
+      },
+    });
+    if (!trip) throw new NotFoundException("This share link is not valid");
+
+    const driverLocation = trip.driver
+      ? await this.locationService.getDriverLocation((await this.prisma.trip.findUnique({ where: { id: trip.id }, select: { driverId: true } }))!.driverId!)
+      : null;
+
+    return {
+      id: trip.id,
+      status: trip.status,
+      vehicleType: trip.vehicleType,
+      pickup: { lat: trip.pickupLat, lng: trip.pickupLng },
+      dropoff: { lat: trip.dropoffLat, lng: trip.dropoffLng },
+      // First name only — enough to recognise, not a full identity dump.
+      driverFirstName: trip.driver?.name ? trip.driver.name.split(" ")[0] : null,
+      driverRating: trip.driver?.rating ?? null,
+      riderFirstName: trip.rider?.name ? trip.rider.name.split(" ")[0] : null,
+      driverLocation,
+      matchedAt: trip.matchedAt,
+      startedAt: trip.startedAt,
+      completedAt: trip.completedAt,
+    };
   }
 
   async listMyTrips(userId: string) {

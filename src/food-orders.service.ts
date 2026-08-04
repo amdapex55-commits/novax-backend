@@ -205,10 +205,15 @@ export class FoodOrdersService {
   async markDelivered(driverId: string, orderId: string) {
     const order = await this.getOrderOr404(orderId);
     this.assertDriverOwnsOrder(order, driverId, ["PICKED_UP"]);
-    const updated = await this.prisma.foodOrder.update({
-      where: { id: orderId },
+
+    // Conditional transition so a retry can't double-pay the driver AND the
+    // restaurant — see TripsService.completeTrip for the full reasoning.
+    const claimed = await this.prisma.foodOrder.updateMany({
+      where: { id: orderId, status: "PICKED_UP" },
       data: { status: "DELIVERED", deliveredAt: new Date() },
     });
+    if (claimed.count === 0) return this.getOrderOr404(orderId);
+    const updated = await this.getOrderOr404(orderId);
     this.locationGateway.emitToUser(order.customerId, "foodOrder:delivered", { orderId });
 
     // Driver payout + restaurant payout must land together — see
@@ -254,14 +259,25 @@ export class FoodOrdersService {
     return this.ratingsService.rate({ raterId, rateeId: order.driverId, score, comment, foodOrderId: orderId });
   }
 
-  async getOrder(orderId: string) {
-    // Includes restaurant (name + pickup lat/lng) so the driver progress
-    // screen can show where to actually go, not just a generic "head to the
-    // restaurant" with no address.
-    return this.prisma.foodOrder.findUnique({
+  // Includes restaurant (name + pickup lat/lng) so the driver progress
+  // screen can show where to actually go, not just a generic "head to the
+  // restaurant" with no address.
+  //
+  // Ownership-checked: customer, assigned driver, and the restaurant's own
+  // owner are the three legitimate readers. Previously any logged-in user
+  // could read any order (dropoff address + notes) by guessing an id.
+  async getOrder(orderId: string, requesterId: string, requesterRole?: string) {
+    const order = await this.prisma.foodOrder.findUnique({
       where: { id: orderId },
-      include: { items: true, restaurant: { select: { name: true, address: true, lat: true, lng: true } } },
+      include: { items: true, restaurant: { select: { ownerId: true, name: true, address: true, lat: true, lng: true } } },
     });
+    if (!order) throw new NotFoundException("Order not found");
+    const isParty =
+      order.customerId === requesterId ||
+      order.driverId === requesterId ||
+      order.restaurant?.ownerId === requesterId;
+    if (requesterRole !== "ADMIN" && !isParty) throw new ForbiddenException("Not your order");
+    return order;
   }
 
   async listMine(userId: string) {

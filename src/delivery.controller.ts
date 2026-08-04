@@ -67,8 +67,8 @@ export class DeliveryController {
   }
 
   @Get(":id")
-  getOne(@Param("id") id: string) {
-    return this.deliveryService.getDelivery(id);
+  getOne(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.deliveryService.getDelivery(id, user.userId, user.role);
   }
 
   @Get()

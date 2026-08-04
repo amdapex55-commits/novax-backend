@@ -24,7 +24,16 @@ interface AuthedSocket extends Socket {
 // This is the piece the roadmap flags as "split into its own service first"
 // once a single city's write volume outgrows one process — until then it's
 // just another module in the monolith.
-@WebSocketGateway({ namespace: "/location", cors: { origin: "*" } })
+@WebSocketGateway({
+  namespace: "/location",
+  // Same allowlist as the REST API (see main.ts) — a wide-open socket CORS
+  // policy undoes a locked-down HTTP one, since the live-tracking stream is
+  // reachable from any page the user happens to have open.
+  cors: {
+    origin: process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean) ?? "*",
+    credentials: true,
+  },
+})
 export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(LocationGateway.name);
 
@@ -69,7 +78,24 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       // than leaving the column permanently false. upsert because a brand
       // new driver account may not have a DriverProfile row yet (created
       // lazily by the Vehicle screen) — connecting shouldn't 500 on that.
+      //
+      // Gated on KYC: previously ANY account with role DRIVER flipped online
+      // and entered the matching pool the moment it opened a socket, even
+      // with kycStatus PENDING/REJECTED or a deactivated account — i.e. an
+      // unverified person could be dispatched to a real passenger.
       if (client.role === "DRIVER") {
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { kycStatus: true, isActive: true },
+        });
+        if (!user?.isActive || user.kycStatus !== "APPROVED") {
+          this.logger.warn(`Driver ${userId} blocked from going online (kyc=${user?.kycStatus}, active=${user?.isActive})`);
+          client.emit("driver:notApproved", {
+            message: "Your account isn't approved to go online yet.",
+          });
+          client.disconnect(true);
+          return;
+        }
         await this.prisma.driverProfile.upsert({
           where: { userId },
           create: { userId, vehicleType: "bike", isOnline: true },
@@ -101,7 +127,17 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     // If this driver is actively on a trip, push the position straight to the
     // rider who's watching it — this is the "live tracking on the map" feature.
+    //
+    // Verified against the trip record first: a driver used to be able to
+    // broadcast their coordinates into ANY trip room by passing someone
+    // else's tripId, spoofing the driver position a stranger's rider app
+    // was watching.
     if (body.tripId) {
+      const trip = await this.prisma.trip.findUnique({
+        where: { id: body.tripId },
+        select: { driverId: true },
+      });
+      if (trip?.driverId !== client.userId) return;
       this.server.to(`trip:${body.tripId}`).emit("trip:driverLocation", {
         tripId: body.tripId,
         lat: body.lat,
@@ -110,9 +146,22 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
-  // Rider's app calls this once matched, to start receiving driver:location pushes.
+  // Rider's app calls this once matched, to start receiving driver:location
+  // pushes. Membership is checked against the trip itself — any authenticated
+  // socket could previously join any `trip:<id>` room just by guessing an id,
+  // and silently watch a stranger's live location for their whole ride.
   @SubscribeMessage("trip:subscribe")
-  onTripSubscribe(@ConnectedSocket() client: AuthedSocket, @MessageBody() body: { tripId: string }) {
+  async onTripSubscribe(@ConnectedSocket() client: AuthedSocket, @MessageBody() body: { tripId: string }) {
+    if (!client.userId) return;
+    const trip = await this.prisma.trip.findUnique({
+      where: { id: body.tripId },
+      select: { riderId: true, driverId: true },
+    });
+    if (!trip) return;
+    if (trip.riderId !== client.userId && trip.driverId !== client.userId) {
+      this.logger.warn(`User ${client.userId} denied subscribe to trip ${body.tripId}`);
+      return;
+    }
     client.join(`trip:${body.tripId}`);
   }
 

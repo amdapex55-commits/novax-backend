@@ -67,8 +67,80 @@ model User {
   errandsAsDriver        Errand[]    @relation("ErrandsAsDriver")
 
   chatMessages ChatMessage[]
+  incidents    Incident[]
 
   @@map("users")
+}
+
+// Funnel analytics. Deliberately a plain event log rather than a
+// third-party SDK: no cookie banner, no data leaving the country, and the
+// numbers that matter (how many OTPs requested vs verified vs rides
+// completed) are a GROUP BY away instead of locked in someone's dashboard.
+//
+// Swap in PostHog/Mixpanel later if you outgrow it — the emit points in the
+// app stay the same, only this sink changes.
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  // e.g. "otp_requested", "otp_verified", "ride_requested",
+  // "driver_matched", "ride_accepted", "ride_completed", "ride_cancelled",
+  // "restaurant_accepted", "food_delivered". See analytics.constants.ts.
+  name      String
+  // Nullable: pre-login events (otp_requested) have no user yet — which is
+  // exactly the top of the funnel we most need to measure.
+  userId    String?
+  role      String?
+  // Free-form context (tripId, vehicleType, failure reason, ...). Small by
+  // convention; this is a funnel log, not an event warehouse.
+  props     Json?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([userId])
+  @@map("analytics_events")
+}
+
+enum IncidentType {
+  SOS              // panic button pressed during an active job
+  ACCIDENT
+  HARASSMENT
+  VEHICLE_BREAKDOWN
+  OTHER
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+// Safety incident log. An SOS press must leave a durable record that ops can
+// see and act on — a toast that disappears is not a safety feature. Captures
+// where the person was when they pressed it, since "where are they right
+// now" is the first question anyone responding will ask.
+model Incident {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id])
+  type        IncidentType   @default(SOS)
+  status      IncidentStatus @default(OPEN)
+
+  // Which job it happened on, if any (same context pattern as ChatMessage).
+  contextType String? // "TRIP" | "DELIVERY" | "FOOD_ORDER" | "ERRAND"
+  contextId   String?
+
+  lat         Float?
+  lng         Float?
+  note        String?
+  // Filled in by whoever on the ops side picks it up.
+  handledById String?
+  handledAt   DateTime?
+  resolution  String?
+
+  createdAt   DateTime       @default(now())
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("incidents")
 }
 
 // One thread per "context" (an active Trip, Delivery, FoodOrder, or Errand) —
@@ -155,6 +227,29 @@ model DriverProfile {
   licenseDocUrl String?  // Cloudflare R2 object URL
   isOnline      Boolean  @default(false)
 
+  // --- Onboarding / ops (what a human actually needs to approve a driver) ---
+  // Every one of these is reviewed by a real person in the ops dashboard
+  // before kycStatus flips to APPROVED — the app only collects them.
+  cnicFrontUrl        String?
+  cnicBackUrl         String?
+  vehicleDocUrl       String?  // registration book / ownership papers
+  vehiclePhotoUrl     String?
+  // Which part of the city they'll work. Free text for now (single-city MVP);
+  // becomes a real Zone relation when there's more than one city.
+  serviceZone         String?
+  // Cash-only launch: this is where the platform sends the driver's earnings,
+  // NOT a card on file. Nothing here is a payment credential — it's a payout
+  // destination the ops team pays out to manually.
+  payoutMethod        String?  // "JAZZCASH" | "EASYPAISA" | "BANK"
+  payoutAccountName   String?
+  payoutAccountNumber String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  // Ops checklist — set by an admin during onboarding, not self-service.
+  trainingCompleted   Boolean  @default(false)
+  onboardingNotes     String?  // internal ops notes, never shown to the driver
+  submittedForReviewAt DateTime?
+
   // Dual-mode toggle: a driver only ever receives offers from ONE queue at a
   // time — "RIDE" (Bike/Taxi trip + parcel matching) or "FOOD_ERRAND" (food
   // delivery + buy-for-me matching). Switching is a single tap in the app;
@@ -221,6 +316,14 @@ model Trip {
   startedAt   DateTime?
   completedAt DateTime?
   cancelledAt DateTime?
+
+  // "Share my ride" — an unguessable token that lets someone WITHOUT an
+  // account watch this trip's progress (the safety feature every ride app
+  // has). Generated on demand, not at creation, so trips nobody shared never
+  // get a live public surface. Reading via this token exposes a deliberately
+  // minimal projection (see trips.service.getSharedTrip) — status, driver
+  // first name, vehicle, coarse position — never phone numbers or fare.
+  shareToken  String?    @unique
 
   ledgerEntries LedgerEntry[]
   rating        Rating?
@@ -324,6 +427,16 @@ model LedgerEntry {
   createdAt        DateTime        @default(now())
 
   @@index([userId])
+  // Database-level backstop against double-paying one job. The services'
+  // conditional status transitions (updateMany ... where status = <prior>)
+  // are the primary guard; these make a duplicate physically impossible even
+  // if a future code path forgets. Partial-unique per job type: a job can
+  // have several entries of DIFFERENT types (a food order pays both the
+  // driver and the restaurant) but never two of the same type.
+  @@unique([tripId, type], name: "uniq_trip_payout")
+  @@unique([deliveryId, type], name: "uniq_delivery_payout")
+  @@unique([foodOrderId, type], name: "uniq_food_order_payout")
+  @@unique([errandId, type], name: "uniq_errand_payout")
   @@map("ledger_entries")
 }
 
@@ -411,6 +524,21 @@ model Restaurant {
   isOpen         Boolean          @default(false) // owner-controlled "accepting orders" toggle
   commissionRate Float            @default(0.20)  // platform cut of itemsTotal
   rating         Float            @default(5.0)
+
+  // --- Ops settings ---
+  // Kitchen's own estimate, shown to customers as part of the delivery ETA
+  // and adjustable per-order when they accept (a biryani order is not a
+  // 10-minute job). Drives the "arrives in ~X min" the customer sees.
+  prepTimeMinutes Int    @default(20)
+  // Someone has to be reachable when an order is missed — this is the number
+  // ops actually calls, which may not be the account's login phone.
+  notifyPhone     String?
+  // Payout destination for the restaurant's share. Same as the driver's:
+  // a destination ops pays out to, never a stored payment credential.
+  payoutMethod        String?
+  payoutAccountName   String?
+  payoutAccountNumber String?
+  onboardingNotes     String?
 
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt

@@ -74,9 +74,15 @@ export class TripsController {
     return this.tripsService.getWeeklyIncentiveProgress(user.userId);
   }
 
+  @Post(":id/share")
+  @ApiOperation({ summary: "Create a public live-tracking link for this trip" })
+  share(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.tripsService.createShareLink(id, user.userId);
+  }
+
   @Get(":id")
-  getOne(@Param("id") id: string) {
-    return this.tripsService.getTrip(id);
+  getOne(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.tripsService.getTrip(id, user.userId, user.role);
   }
 
   @Get()

@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
-    "start": "prisma db push --accept-data-loss --skip-generate && node dist/main",
+    "start": "prisma db push --skip-generate && node dist/main",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --fix",

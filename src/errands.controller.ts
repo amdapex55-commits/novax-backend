@@ -59,8 +59,8 @@ export class ErrandsController {
   }
 
   @Get(":id")
-  getOne(@Param("id") id: string) {
-    return this.errandsService.getErrand(id);
+  getOne(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.errandsService.getErrand(id, user.userId, user.role);
   }
 
   @Get()

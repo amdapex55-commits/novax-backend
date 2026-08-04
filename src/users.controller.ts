@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
-import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { RolesGuard } from "./roles.guard";
 import { Roles } from "./roles.decorator";
@@ -8,6 +8,8 @@ import { UsersService } from "./users.service";
 import { UpdateProfileDto } from "./update-profile.dto";
 import { UpdateVehicleDto } from "./update-vehicle.dto";
 import { SetModeDto } from "./set-mode.dto";
+import { DriverOnboardingDto, AdminDriverReviewDto } from "./driver-onboarding.dto";
+import { RejectKycDto } from "./reject-kyc.dto";
 
 @ApiTags("users")
 @ApiBearerAuth()
@@ -44,9 +46,55 @@ export class UsersController {
     return this.usersService.setActiveMode(user.userId, dto);
   }
 
+  // --- Driver onboarding (self-service side) ---
+
+  @Get("me/onboarding")
+  @Roles("DRIVER")
+  @ApiOperation({ summary: "Onboarding progress + what's still missing" })
+  getOnboarding(@CurrentUser() user: { userId: string }) {
+    return this.usersService.getOnboardingStatus(user.userId);
+  }
+
+  @Patch("me/onboarding")
+  @Roles("DRIVER")
+  @ApiOperation({ summary: "Save onboarding details (partial saves allowed)" })
+  saveOnboarding(@CurrentUser() user: { userId: string }, @Body() dto: DriverOnboardingDto) {
+    return this.usersService.saveOnboarding(user.userId, dto);
+  }
+
+  @Post("me/onboarding/submit")
+  @Roles("DRIVER")
+  @ApiOperation({ summary: "Submit the completed application for human review" })
+  submitOnboarding(@CurrentUser() user: { userId: string }) {
+    return this.usersService.submitForReview(user.userId);
+  }
+
+  // --- Ops review side ---
+
+  @Get(":id/application")
+  @Roles("ADMIN")
+  @ApiOperation({ summary: "Full driver application for the ops review screen" })
+  getApplication(@Param("id") id: string) {
+    return this.usersService.getDriverApplication(id);
+  }
+
+  @Patch(":id/review")
+  @Roles("ADMIN")
+  @ApiOperation({ summary: "Internal ops notes + training checklist" })
+  review(@Param("id") id: string, @Body() dto: AdminDriverReviewDto) {
+    return this.usersService.adminReviewDriver(id, dto);
+  }
+
   @Post(":id/approve-kyc")
   @Roles("ADMIN")
   approveKyc(@Param("id") id: string) {
     return this.usersService.approveDriverKyc(id);
+  }
+
+  @Post(":id/reject-kyc")
+  @Roles("ADMIN")
+  @ApiOperation({ summary: "Reject with a reason the driver actually sees" })
+  rejectKyc(@Param("id") id: string, @Body() dto: RejectKycDto) {
+    return this.usersService.rejectDriverKyc(id, dto.reason);
   }
 }
