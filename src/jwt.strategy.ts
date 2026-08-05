@@ -5,7 +5,12 @@ import { ConfigService } from "@nestjs/config";
 
 export interface JwtPayload {
   sub: string; // user id
-  role: "RIDER" | "DRIVER" | "ADMIN";
+  // Must mirror the Prisma `Role` enum exactly. RESTAURANT was missing here
+  // while being fully supported everywhere else (signup DTO, guards, 10
+  // @Roles("RESTAURANT") routes) — the runtime was fine because validate()
+  // passes payload.role straight through, but the type lied, which is how
+  // someone later "fixes" a false type error by breaking real behaviour.
+  role: "RIDER" | "DRIVER" | "ADMIN" | "RESTAURANT";
 }
 
 @Injectable()
