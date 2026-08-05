@@ -540,6 +540,23 @@ model Restaurant {
   payoutAccountNumber String?
   onboardingNotes     String?
 
+  // --- Storefront details collected at onboarding ---
+  // Who ops speaks to. The account phone is a login credential; this is a
+  // human being with a name, which matters when a kitchen goes silent
+  // mid-dinner-rush and someone has to be called.
+  ownerName       String?
+  ownerPhone      String?
+  // Weekly hours as { mon: { open: "11:00", close: "23:00", closed: false }, ... }.
+  // JSON rather than 14 columns because kitchens change these constantly and
+  // splitting/rejoining them per day buys nothing.
+  openingHours    Json?
+  // How far this kitchen is willing to send food, in km. Beyond it we simply
+  // don't show the storefront — better than accepting an order the rider
+  // can't deliver hot.
+  deliveryRadiusKm Float  @default(5)
+  // Minimum basket. Kitchens use this to make small orders worth cooking.
+  minOrderValue    Float  @default(0)
+
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
