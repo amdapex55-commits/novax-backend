@@ -13,7 +13,8 @@
     "test": "jest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "prestart": "node -e \"require('fs').existsSync('dist/main.js')||(console.error('\\n[NovaX] dist/main.js is missing \u2014 the TypeScript build did not run.\\n  Cause: NODE_ENV=production makes npm skip devDependencies, which is where the Nest CLI and tsc live.\\n  Fix: install with --include=dev (see nixpacks.toml), or set NPM_CONFIG_PRODUCTION=false.\\n'),process.exit(1))\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.632.0",
@@ -55,5 +56,8 @@
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

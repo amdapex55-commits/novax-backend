@@ -1,0 +1,30 @@
+# Railway / Nixpacks build configuration.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Setting NODE_ENV=production (which you must, so the config guard and the
+# Swagger lockdown behave correctly) makes `npm install` skip devDependencies.
+# But the TypeScript compiler and the Nest CLI ARE devDependencies — they're
+# build tools, not runtime code. So the install succeeded, `nest build` had no
+# `nest` to run, `dist/` was never produced, and the container crashed with:
+#
+#     Error: Cannot find module '/app/dist/main'
+#
+# which looks like a missing file but is really a missing compiler.
+#
+# `--include=dev` forces the build tools in regardless of NODE_ENV. They're
+# only present during the build image; the runtime image runs plain
+# `node dist/main`, so nothing extra ships to production.
+#
+# This is pinned here rather than left to a Railway dashboard setting so the
+# fix travels with the repo — a fresh deploy, or a new environment, can't
+# silently lose it.
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"
