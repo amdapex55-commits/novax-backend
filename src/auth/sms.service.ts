@@ -64,7 +64,22 @@ export class SmsService {
     // customer with several OTPs on screen knows which is which, and stating
     // "never share" is the cheapest defence against the phone-call scam where
     // someone rings a rider pretending to be support and asks for their code.
-    const body = `${code} is your Nova X code. Never share it with anyone, including Nova X staff.`;
+    //
+    // THE LAST LINE IS LOAD-BEARING. `@domain #code` is the WebOTP format:
+    // Chrome on Android reads it and offers to fill the code automatically,
+    // so the customer never leaves the app to go and read their messages.
+    // Without this exact final line the browser ignores the SMS and the
+    // autofill in auth.js silently never fires.
+    //
+    // The domain must match the origin the app is served from. Set
+    // OTP_DOMAIN to your GitHub Pages host (e.g. "amdapex55-commits.github.io")
+    // or your custom domain — it is NOT the API's domain.
+    const domain = this.config.get<string>("OTP_DOMAIN");
+    const webOtpLine = domain ? `\n\n@${domain} #${code}` : "";
+
+    const body =
+      `${code} is your Nova X code. Never share it with anyone, ` +
+      `including Nova X staff.${webOtpLine}`;
 
     const params = new URLSearchParams({ To: phone, From: from, Body: body });
     const auth = Buffer.from(`${sid}:${token}`).toString("base64");

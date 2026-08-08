@@ -12,12 +12,22 @@ export enum UploadPurpose {
   RESTAURANT_LOGO = "restaurant-logo",
   RESTAURANT_BANNER = "restaurant-banner",
   MENU_ITEM = "menu-item",
+  // Short voice note from a customer describing their exact pickup point.
+  // Karachi addresses are spoken, not written — "gate ke saamne" gets a rider
+  // to your door in a way a GPS pin cannot.
+  PICKUP_NOTE = "pickup-note",
 }
 
 // Whitelist, not a free-text mime type field — an open string here would let a
 // client ask you to presign a URL for uploading anything (e.g. an .html or
 // .exe) into a bucket that's meant to hold photos/PDFs only.
-const ALLOWED_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+const ALLOWED_CONTENT_TYPES = [
+  "image/jpeg", "image/png", "image/webp", "application/pdf",
+  // Voice pickup notes. Browsers pick their own container: Chrome/Android
+  // give webm, Safari gives mp4/aac. Both are accepted so the feature isn't
+  // silently iOS-only.
+  "audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg",
+];
 
 export class PresignUploadDto {
   @ApiProperty({ enum: UploadPurpose })

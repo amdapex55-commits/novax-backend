@@ -1,4 +1,4 @@
-import { IsEnum, IsLatitude, IsLongitude, IsNumber, IsOptional, IsPositive } from "class-validator";
+import { IsEnum, IsLatitude, IsLongitude, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export enum VehicleTypeDto {
@@ -70,6 +70,17 @@ export class CreateTripDto {
   @IsNumber()
   @IsPositive()
   roadDurationMinutes?: number;
+
+  @ApiPropertyOptional({ example: "Neeli building, gate ke saamne" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  pickupNote?: string;
+
+  @ApiPropertyOptional({ description: "R2 URL of a short voice note from the customer" })
+  @IsOptional()
+  @IsString()
+  pickupNoteAudioUrl?: string;
 
   /** GPS accuracy of the pickup in metres, as reported by the device. */
   @ApiPropertyOptional({ description: "Pickup GPS accuracy in metres", example: 18 })

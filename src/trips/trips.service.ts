@@ -96,6 +96,8 @@ export class TripsService {
         distanceKm,
         distanceSource,
         pickupAccuracyMeters: dto.pickupAccuracyMeters,
+        pickupNote: dto.pickupNote,
+        pickupNoteAudioUrl: dto.pickupNoteAudioUrl,
         fare,
         offeredFare: dto.offeredFare,
       },

@@ -309,6 +309,11 @@ model Trip {
   // be answered with evidence rather than a guess, and so you can see how
   // often the routing host is failing you.
   distanceSource String? // "ROUTED" | "ESTIMATED"
+  // What the customer told their rider about finding them. Karachi pickups
+  // are described, not addressed — this is often the difference between a
+  // 30-second pickup and a phone call.
+  pickupNote      String?
+  pickupNoteAudioUrl String?
   // GPS accuracy of the pickup in metres at booking time. A pickup complaint
   // ("nobody came to my door") is a completely different investigation at
   // ±15m than at ±800m, and without this you can't tell them apart.
