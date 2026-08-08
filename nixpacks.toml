@@ -1,27 +1,29 @@
 # Railway / Nixpacks build configuration.
 #
-# WHY THIS FILE EXISTS
-# --------------------
-# Setting NODE_ENV=production (which you must, so the config guard and the
-# Swagger lockdown behave correctly) makes `npm install` skip devDependencies.
-# But the TypeScript compiler and the Nest CLI ARE devDependencies — they're
-# build tools, not runtime code. So the install succeeded, `nest build` had no
-# `nest` to run, `dist/` was never produced, and the container crashed with:
+# THE ACTUAL FIX IS IN package.json, NOT HERE.
 #
-#     Error: Cannot find module '/app/dist/main'
+# History, so nobody re-breaks this:
 #
-# which looks like a missing file but is really a missing compiler.
+#   1. NODE_ENV=production makes npm install with --omit=dev.
+#   2. The Nest CLI and the TypeScript compiler were devDependencies.
+#   3. So they weren't installed, `nest build` had no compiler, `dist/` was
+#      never produced, and the container died with:
+#         Error: Cannot find module '/app/dist/main'
+#   4. The first attempt at a fix was this file, forcing `--include=dev`.
+#      Railway ignored it and kept using its own install command — the deploy
+#      log still showed `npm warn config production Use --omit=dev instead`.
 #
-# `--include=dev` forces the build tools in regardless of NODE_ENV. They're
-# only present during the build image; the runtime image runs plain
-# `node dist/main`, so nothing extra ships to production.
+# So the build tools were moved into `dependencies` in package.json instead.
+# They are then installed no matter what flags the platform chooses, which
+# means the build works on Railway, Render, Fly, Docker or a laptop without
+# any platform-specific configuration at all. Verified by running
+# `npm ci --omit=dev` and confirming the compiler is still present.
 #
-# This is pinned here rather than left to a Railway dashboard setting so the
-# fix travels with the repo — a fresh deploy, or a new environment, can't
-# silently lose it.
+# This file now only pins the phases explicitly. If Railway honours it, good;
+# if it ignores it (as it did before), the build still works.
 
 [phases.install]
-cmds = ["npm ci --include=dev"]
+cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build"]
