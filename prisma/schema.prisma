@@ -304,6 +304,15 @@ model Trip {
   dropoffLng  Float
 
   distanceKm  Float?
+  // Was this fare based on a real road route, or a straight-line estimate
+  // because routing was unavailable? Recorded per trip so a fare dispute can
+  // be answered with evidence rather than a guess, and so you can see how
+  // often the routing host is failing you.
+  distanceSource String? // "ROUTED" | "ESTIMATED"
+  // GPS accuracy of the pickup in metres at booking time. A pickup complaint
+  // ("nobody came to my door") is a completely different investigation at
+  // ±15m than at ±800m, and without this you can't tell them apart.
+  pickupAccuracyMeters Float?
   // Money fields use Decimal, not Float — binary floating point can't
   // represent PKR amounts exactly (0.1 + 0.2 !== 0.3), and that drift
   // compounds across ledger entries. Decimal(10,2) is exact and still plain

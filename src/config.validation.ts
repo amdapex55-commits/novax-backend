@@ -41,8 +41,19 @@ export function assertProductionConfig(): void {
   const smsProvider = process.env.SMS_PROVIDER ?? "console";
   if (smsProvider === "console") {
     problems.push(
-      'SMS_PROVIDER is "console" — OTP codes would be written to server logs instead of texted. Configure a real SMS provider.',
+      'SMS_PROVIDER is "console" — OTP codes would be written to server logs instead of texted. Set SMS_PROVIDER=twilio.',
     );
+  } else if (smsProvider === "twilio") {
+    // Catch a half-configured Twilio at BOOT rather than at the moment a
+    // real customer taps "send code" and gets a 500. The whole point of
+    // this file is that misconfiguration fails loudly and early.
+    const missing = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"]
+      .filter((k) => !process.env[k]);
+    if (missing.length) {
+      problems.push(`SMS_PROVIDER is "twilio" but ${missing.join(", ")} not set — OTP delivery would fail.`);
+    }
+  } else {
+    problems.push(`SMS_PROVIDER "${smsProvider}" is not implemented. Use "twilio".`);
   }
 
   if (!process.env.CORS_ORIGINS) {

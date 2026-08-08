@@ -43,4 +43,37 @@ export class CreateTripDto {
   @IsNumber()
   @IsPositive()
   offeredFare?: number;
+
+  /**
+   * ROAD distance in km, from the client's routing engine (OSRM).
+   *
+   * Sent by the client because the client already computed it to draw the
+   * route line and show the fare — asking the server to route again would
+   * double the calls to the routing host and could produce a different
+   * number than the one the customer just agreed to.
+   *
+   * The server does NOT trust it blindly: it's sanity-checked against the
+   * straight-line distance in trips.service (a road route can't be shorter
+   * than the crow-flies distance, and shouldn't be more than ~3× it). A
+   * value outside that band is discarded and the server recomputes its own
+   * estimate — otherwise a modified client could send distanceKm: 0.1 and
+   * ride across the city for the minimum fare.
+   */
+  @ApiPropertyOptional({ description: "Road distance in km from the routing engine", example: 6.2 })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  roadDistanceKm?: number;
+
+  @ApiPropertyOptional({ description: "Road duration in minutes from the routing engine", example: 18 })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  roadDurationMinutes?: number;
+
+  /** GPS accuracy of the pickup in metres, as reported by the device. */
+  @ApiPropertyOptional({ description: "Pickup GPS accuracy in metres", example: 18 })
+  @IsOptional()
+  @IsNumber()
+  pickupAccuracyMeters?: number;
 }

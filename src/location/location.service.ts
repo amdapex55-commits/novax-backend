@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { RedisService } from "../redis/redis.service";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -11,6 +11,8 @@ const GEO_KEY = "drivers:geo"; // single-city MVP; shard per-city (drivers:geo:<
 
 @Injectable()
 export class LocationService {
+  private readonly logger = new Logger(LocationService.name);
+
   constructor(
     private redis: RedisService,
     private prisma: PrismaService,
@@ -47,10 +49,60 @@ export class LocationService {
       "WITHDIST",
     )) as [string, string][];
 
-    return results.map(([driverId, distance]) => ({
+    const candidates = results.map(([driverId, distance]) => ({
       driverId,
       distanceKm: parseFloat(distance),
     }));
+
+    // ---- ELIGIBILITY GATE (launch blocker: "driver approval can be
+    // bypassed") -------------------------------------------------------
+    //
+    // The gateway blocks an unapproved driver from GOING online, which
+    // covers the common case. It does not cover the dangerous one: a driver
+    // who was approved, went online (and so is in the Redis geo set), and is
+    // THEN suspended or has their KYC revoked by ops. Their Redis entry
+    // survives until they disconnect — so until this filter existed, ops
+    // could suspend a driver for a safety incident and that same driver
+    // could still be handed the next passenger.
+    //
+    // Redis is a location cache. The database is the authority on whether
+    // someone is allowed to carry a person. Checking it costs one indexed
+    // query per match attempt, which is nothing next to the alternative.
+    return this.filterEligible(candidates);
+  }
+
+  /**
+   * Keep only drivers the database says may currently take a passenger.
+   * Anyone rejected here is also evicted from the geo set, so a suspended
+   * driver stops costing us a query on every subsequent search.
+   */
+  private async filterEligible(candidates: NearbyDriver[]): Promise<NearbyDriver[]> {
+    if (candidates.length === 0) return [];
+
+    const ids = candidates.map((c) => c.driverId);
+    const allowed = await this.prisma.user.findMany({
+      where: {
+        id: { in: ids },
+        role: "DRIVER",
+        isActive: true,           // not suspended by ops
+        kycStatus: "APPROVED",    // documents verified by a person
+        driverProfile: { isOnline: true },
+      },
+      select: { id: true },
+    });
+
+    const allowedIds = new Set(allowed.map((u) => u.id));
+    const rejected = ids.filter((id) => !allowedIds.has(id));
+
+    if (rejected.length) {
+      this.logger.warn(
+        `Excluded ${rejected.length} ineligible driver(s) from matching: ${rejected.join(", ")}`,
+      );
+      // Evict them so they stop appearing in future searches.
+      await Promise.all(rejected.map((id) => this.removeDriver(id).catch(() => {})));
+    }
+
+    return candidates.filter((c) => allowedIds.has(c.driverId));
   }
 
   /** Food/errand matching needs the same geo search as ride matching, but

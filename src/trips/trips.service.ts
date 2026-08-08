@@ -8,7 +8,7 @@ import { LedgerService } from "../ledger/ledger.service";
 import { RatingsService } from "../ratings/ratings.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
-import { estimateFare, haversineKm } from "./fare.util";
+import { estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
 
 // Weekly driver bonus threshold — see getWeeklyIncentiveProgress(). A flat,
 // code-defined tier rather than an admin-configurable campaign system,
@@ -43,9 +43,46 @@ export class TripsService {
       throw new BadRequestException("offeredFare is required when fareType is BID");
     }
 
-    const distanceKm = haversineKm(dto.pickupLat, dto.pickupLng, dto.dropoffLat, dto.dropoffLng);
+    // ---- Distance ----------------------------------------------------
+    // Prefer the ROAD distance the client measured (it's what the customer
+    // was quoted on), but never trust it unchecked: a modified client could
+    // otherwise claim a 12km ride is 0.2km and pay the minimum fare.
+    //
+    // Sanity band: a road route is always at least the straight-line
+    // distance, and in a city grid is rarely more than ~3× it. Anything
+    // outside that is either a bug or an attack, and we fall back to our
+    // own estimate rather than honouring it.
+    const straightLineKm = haversineKm(dto.pickupLat, dto.pickupLng, dto.dropoffLat, dto.dropoffLng);
+
+    let distanceKm: number;
+    let distanceSource: "ROUTED" | "ESTIMATED";
+
+    const claimed = dto.roadDistanceKm;
+    const plausible =
+      typeof claimed === "number" &&
+      Number.isFinite(claimed) &&
+      // 0.98 rather than 1.0: floating-point and slightly different geoid
+      // models mean a genuine route can come back a hair under haversine.
+      claimed >= straightLineKm * 0.98 &&
+      claimed <= straightLineKm * 3;
+
+    if (plausible) {
+      distanceKm = claimed!;
+      distanceSource = "ROUTED";
+    } else {
+      distanceKm = roadEstimateFromStraightLine(straightLineKm);
+      distanceSource = "ESTIMATED";
+      if (claimed !== undefined) {
+        this.logger.warn(
+          `Rejected implausible roadDistanceKm=${claimed} for straight-line ${straightLineKm.toFixed(2)}km (rider ${riderId})`,
+        );
+      }
+    }
+
     const fare =
-      dto.fareType === "BID" ? dto.offeredFare : estimateFare(dto.vehicleType as any, distanceKm);
+      dto.fareType === "BID"
+        ? dto.offeredFare
+        : estimateFare(dto.vehicleType as any, distanceKm, dto.roadDurationMinutes);
 
     const trip = await this.prisma.trip.create({
       data: {
@@ -57,6 +94,8 @@ export class TripsService {
         dropoffLat: dto.dropoffLat,
         dropoffLng: dto.dropoffLng,
         distanceKm,
+        distanceSource,
+        pickupAccuracyMeters: dto.pickupAccuracyMeters,
         fare,
         offeredFare: dto.offeredFare,
       },
