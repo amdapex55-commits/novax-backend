@@ -1,9 +1,14 @@
+// FIRST IMPORT, DELIBERATELY. Sentry instruments HTTP, Prisma and Redis by
+// patching those modules as they load — if Nest pulls them in first there is
+// nothing left to patch, and errors arrive stripped of request context.
+import "./instrument";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { assertProductionConfig } from "./config.validation";
+import { sentryEnabled } from "./instrument";
 
 async function bootstrap() {
   // Fail fast BEFORE the app boots: a production deploy missing JWT secrets
@@ -12,6 +17,15 @@ async function bootstrap() {
   assertProductionConfig();
 
   const app = await NestFactory.create(AppModule);
+
+  // Routes unhandled exceptions from Nest's own filters into Sentry. No-op
+  // when SENTRY_DSN is unset.
+  if (sentryEnabled) {
+    const { SentryGlobalFilter } = await import("@sentry/nestjs/setup");
+    const { HttpAdapterHost } = await import("@nestjs/core");
+    app.useGlobalFilters(new SentryGlobalFilter(app.get(HttpAdapterHost).httpAdapter));
+    console.log("Sentry error reporting: on");
+  }
 
   // Reject any request body field that isn't declared on the DTO,
   // and strip/whitelist the rest — first line of defense against bad input.
