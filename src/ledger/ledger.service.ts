@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { splitFare } from "./commission.util";
+import { DRIVER_CREDIT_LIMIT_PKR } from "../location/location.service";
 
 @Injectable()
 export class LedgerService {
@@ -188,7 +189,22 @@ export class LedgerService {
     // _sum on a Decimal column comes back as a Decimal (or null with zero
     // rows), not a plain number — Number() here for the same reason as
     // commission.util.ts's splitFare().
-    return { userId, balance: result._sum.netAmount ? Number(result._sum.netAmount) : 0 };
+    const balance = result._sum.netAmount ? Number(result._sum.netAmount) : 0;
+    // The driver app needs all three to explain itself. Showing a bare
+    // negative number without the limit next to it tells a driver they're in
+    // trouble without telling them how much trouble, or what clears it.
+    return {
+      userId,
+      balance,
+      creditLimit: DRIVER_CREDIT_LIMIT_PKR === 0 ? null : -DRIVER_CREDIT_LIMIT_PKR,
+      // True = not being offered work until they settle (enforced in
+      // LocationService.filterEligible, off the same sum as this balance).
+      blocked: DRIVER_CREDIT_LIMIT_PKR !== 0 && balance <= -DRIVER_CREDIT_LIMIT_PKR,
+      amountToSettle:
+        DRIVER_CREDIT_LIMIT_PKR !== 0 && balance <= -DRIVER_CREDIT_LIMIT_PKR
+          ? Math.abs(balance)
+          : 0,
+    };
   }
 
   async getHistory(userId: string) {

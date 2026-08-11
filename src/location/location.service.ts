@@ -34,6 +34,28 @@ const LASTSEEN_TTL_SECONDS = 15 * 60;
 
 const lastSeenKey = (driverId: string) => `driver:lastseen:${driverId}`;
 
+/**
+ * How far a driver's wallet may go negative before they stop being offered work.
+ *
+ * This is cash-collect, so the money flows the "wrong" way: the customer hands
+ * the driver the full fare, and the driver owes us 15% of it. Their ledger
+ * balance therefore goes negative by design, and keeps going.
+ *
+ * Without a floor, a driver can ride indefinitely owing an unbounded amount and
+ * nothing in the system objects. At 40 trips a week on Rs 200 fares that's about
+ * Rs 1,200 owed by Monday — the exposure is real and it compounds silently.
+ *
+ * -2000 PKR is roughly a week and a half of unsettled commission: loose enough
+ * that a working driver never trips it between Monday settlements, tight enough
+ * that the loss is bounded if someone stops paying and disappears.
+ *
+ * Set DRIVER_CREDIT_LIMIT_PKR=0 to disable the cap entirely.
+ */
+export const DRIVER_CREDIT_LIMIT_PKR = (() => {
+  const raw = Number(process.env.DRIVER_CREDIT_LIMIT_PKR);
+  return Number.isFinite(raw) ? Math.abs(raw) : 2000;
+})();
+
 @Injectable()
 export class LocationService {
   private readonly logger = new Logger(LocationService.name);
@@ -135,17 +157,65 @@ export class LocationService {
     });
 
     const allowedIds = new Set(allowed.map((u) => u.id));
+
+    // Drivers who owe us more than the credit limit stop receiving work until
+    // they settle. Checked here rather than in each of trips/delivery/food/
+    // errands, because every one of those matches through this function — a
+    // per-service check is four places to forget it.
+    const overLimit = await this.driversOverCreditLimit(ids);
+    for (const id of overLimit) allowedIds.delete(id);
+
     const rejected = ids.filter((id) => !allowedIds.has(id));
 
     if (rejected.length) {
       this.logger.warn(
         `Excluded ${rejected.length} ineligible driver(s) from matching: ${rejected.join(", ")}`,
       );
-      // Evict them so they stop appearing in future searches.
-      await Promise.all(rejected.map((id) => this.removeDriver(id).catch(() => {})));
+      // Evict the permanently ineligible (suspended, KYC revoked, offline) so
+      // they stop costing a query on every search.
+      //
+      // Over-limit drivers are deliberately NOT evicted: they're still online
+      // and physically present, and the moment their payment lands they should
+      // be matchable again without having to toggle offline and back on.
+      const overLimitSet = new Set(overLimit);
+      await Promise.all(
+        rejected
+          .filter((id) => !overLimitSet.has(id))
+          .map((id) => this.removeDriver(id).catch(() => {})),
+      );
     }
 
     return fresh.filter((c) => allowedIds.has(c.driverId));
+  }
+
+  /**
+   * Which of these drivers owe more than the credit limit.
+   *
+   * One groupBy for the whole candidate list rather than a balance lookup per
+   * driver. Sums netAmount, which is the same figure LedgerService.getBalance()
+   * reports — so what blocks a driver here is exactly the number their wallet
+   * screen shows them, and nobody has to reconcile two different truths.
+   */
+  private async driversOverCreditLimit(driverIds: string[]): Promise<string[]> {
+    if (DRIVER_CREDIT_LIMIT_PKR === 0 || driverIds.length === 0) return [];
+
+    const sums = await this.prisma.ledgerEntry.groupBy({
+      by: ["userId"],
+      where: { userId: { in: driverIds } },
+      _sum: { netAmount: true },
+    });
+
+    const blocked: string[] = [];
+    for (const row of sums) {
+      const balance = row._sum.netAmount ? Number(row._sum.netAmount) : 0;
+      if (balance <= -DRIVER_CREDIT_LIMIT_PKR) {
+        blocked.push(row.userId);
+        this.logger.warn(
+          `Driver ${row.userId} is over the credit limit (balance ${balance.toFixed(2)}, limit -${DRIVER_CREDIT_LIMIT_PKR}) — not being offered work until they settle.`,
+        );
+      }
+    }
+    return blocked;
   }
 
   /**

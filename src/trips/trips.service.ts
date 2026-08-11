@@ -188,14 +188,29 @@ export class TripsService {
   }
 
   async acceptTrip(tripId: string, driverId: string) {
-    const trip = await this.getTripOr404(tripId);
-    if (trip.status !== "MATCHING" || trip.driverId !== driverId) {
-      throw new ForbiddenException("This trip is not awaiting your response");
-    }
-    const updated = await this.prisma.trip.update({
-      where: { id: tripId },
+    // Atomic claim, not read-then-write.
+    //
+    // The old shape was: fetch the job, check status === MATCHING and that the
+    // offer belongs to this driver, then update. Two requests interleaving
+    // between the check and the update both pass, and both write MATCHED — a
+    // double-tap on a flaky Karachi connection is enough. The 15-second
+    // cascade makes it worse: the timeout can hand the job to the next driver
+    // while this driver's accept is still in flight, and the loser only finds
+    // out when they arrive at a pickup someone else is already doing.
+    //
+    // updateMany with the guard in the WHERE clause makes the check and the
+    // write one statement. The database decides the winner; count === 0 means
+    // this driver lost, which is the same answer the old check gave, just
+    // truthfully.
+    const claimed = await this.prisma.trip.updateMany({
+      where: { id: tripId, status: "MATCHING", driverId },
       data: { status: "MATCHED", matchedAt: new Date() },
     });
+    if (claimed.count === 0) {
+      throw new ForbiddenException("This trip is not awaiting your response");
+    }
+    const trip = await this.getTripOr404(tripId);
+    const updated = trip;
     await this.excludedDriversStore.clear("trip", tripId);
     this.locationGateway.server.to(`trip:${tripId}`).emit("trip:matched", { tripId, driverId });
     this.locationGateway.emitToUser(trip.riderId, "trip:matched", { tripId, driverId });

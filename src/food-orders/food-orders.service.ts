@@ -172,11 +172,16 @@ export class FoodOrdersService {
   // ---- Driver-side lifecycle ----
 
   async acceptOffer(driverId: string, orderId: string) {
-    const order = await this.getOrderOr404(orderId);
-    if (order.status !== "MATCHING" || order.driverId !== driverId) {
+    // Atomic claim — see the note in TripsService.acceptTrip().
+    const claimed = await this.prisma.foodOrder.updateMany({
+      where: { id: orderId, status: "MATCHING", driverId },
+      data: { status: "ASSIGNED" },
+    });
+    if (claimed.count === 0) {
       throw new ForbiddenException("This order is not awaiting your response");
     }
-    const updated = await this.prisma.foodOrder.update({ where: { id: orderId }, data: { status: "ASSIGNED" } });
+    const order = await this.getOrderOr404(orderId);
+    const updated = order;
     await this.excludedDriversStore.clear("foodOrder", orderId);
     this.locationGateway.emitToUser(order.customerId, "foodOrder:assigned", { orderId, driverId });
     return updated;

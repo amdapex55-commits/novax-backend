@@ -86,14 +86,16 @@ export class ErrandsService {
   }
 
   async acceptOffer(driverId: string, errandId: string) {
-    const errand = await this.getErrandOr404(errandId);
-    if (errand.status !== "MATCHING" || errand.driverId !== driverId) {
-      throw new ForbiddenException("This errand is not awaiting your response");
-    }
-    const updated = await this.prisma.errand.update({
-      where: { id: errandId },
+    // Atomic claim — see the note in TripsService.acceptTrip().
+    const claimed = await this.prisma.errand.updateMany({
+      where: { id: errandId, status: "MATCHING", driverId },
       data: { status: "ACCEPTED", acceptedAt: new Date() },
     });
+    if (claimed.count === 0) {
+      throw new ForbiddenException("This errand is not awaiting your response");
+    }
+    const errand = await this.getErrandOr404(errandId);
+    const updated = errand;
     await this.excludedDriversStore.clear("errand", errandId);
     this.locationGateway.emitToUser(errand.requesterId, "errand:accepted", { errandId, driverId });
     return updated;

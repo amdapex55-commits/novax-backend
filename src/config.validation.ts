@@ -56,6 +56,24 @@ export function assertProductionConfig(): void {
     problems.push(`SMS_PROVIDER "${smsProvider}" is not implemented. Use "twilio".`);
   }
 
+  // R2 credentials. The AWS SDK does NOT throw on an empty accountId — it
+  // silently builds a request against a nonsense endpoint, so a misconfigured
+  // deploy looks perfectly healthy until the first driver tries to upload
+  // their CNIC and gets an error nobody can explain. Fail at boot instead.
+  const r2Keys = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"];
+  const r2Set = r2Keys.filter((k) => process.env[k]);
+  if (r2Set.length > 0 && r2Set.length < r2Keys.length) {
+    problems.push(
+      `R2 storage is partially configured — missing ${r2Keys.filter((k) => !process.env[k]).join(", ")}. ` +
+        "KYC and proof-of-delivery uploads would fail at the moment a driver needs them.",
+    );
+  } else if (r2Set.length === 0) {
+    problems.push(
+      "No R2 storage configured (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME). " +
+        "Driver KYC document upload is part of onboarding — it cannot work without this.",
+    );
+  }
+
   if (!process.env.CORS_ORIGINS) {
     problems.push(
       "CORS_ORIGINS is not set — the API would accept browser requests from any origin. Set a comma-separated allowlist.",

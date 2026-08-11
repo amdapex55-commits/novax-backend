@@ -100,14 +100,16 @@ export class DeliveryService {
   }
 
   async acceptDelivery(deliveryId: string, driverId: string) {
-    const delivery = await this.getDeliveryOr404(deliveryId);
-    if (delivery.status !== "MATCHING" || delivery.driverId !== driverId) {
-      throw new ForbiddenException("This delivery is not awaiting your response");
-    }
-    const updated = await this.prisma.delivery.update({
-      where: { id: deliveryId },
+    // Atomic claim — see the note in TripsService.acceptTrip().
+    const claimed = await this.prisma.delivery.updateMany({
+      where: { id: deliveryId, status: "MATCHING", driverId },
       data: { status: "MATCHED", matchedAt: new Date() },
     });
+    if (claimed.count === 0) {
+      throw new ForbiddenException("This delivery is not awaiting your response");
+    }
+    const delivery = await this.getDeliveryOr404(deliveryId);
+    const updated = delivery;
     await this.excludedDriversStore.clear("delivery", deliveryId);
     this.locationGateway.emitToUser(delivery.senderId, "delivery:matched", { deliveryId, driverId });
     return updated;

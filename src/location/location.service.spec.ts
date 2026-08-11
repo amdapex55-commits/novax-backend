@@ -15,6 +15,7 @@ function makeService(opts: {
   geoHits: GeoHit[];
   lastSeen: (string | null)[];
   eligibleIds?: string[];
+  ledgerSums?: { userId: string; _sum: { netAmount: number } }[];
 }) {
   const zrem = jest.fn().mockResolvedValue(1);
   const del = jest.fn().mockResolvedValue(1);
@@ -33,9 +34,16 @@ function makeService(opts: {
     return Promise.resolve(ids.filter((id) => allow.includes(id)).map((id) => ({ id })));
   });
 
-  const prisma = { user: { findMany } } as unknown as PrismaService;
+  // filterEligible also sums each candidate's ledger to enforce the credit
+  // limit. Default to no entries = zero balance = nobody blocked, so these
+  // tests stay about GPS freshness.
+  const groupBy = jest.fn().mockResolvedValue(opts.ledgerSums ?? []);
+  const prisma = {
+    user: { findMany },
+    ledgerEntry: { groupBy },
+  } as unknown as PrismaService;
 
-  return { service: new LocationService(redis, prisma), zrem, del, mget, findMany };
+  return { service: new LocationService(redis, prisma), zrem, del, mget, findMany, groupBy };
 }
 
 describe("LocationService.findNearbyDrivers — GPS freshness", () => {
