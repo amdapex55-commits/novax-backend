@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "LedgerEntryType" ADD VALUE 'WALLET_WITHDRAWAL';
+

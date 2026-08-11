@@ -1,11 +1,12 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
-import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { LedgerService } from "./ledger.service";
 import { TopUpDto } from "./dto/top-up.dto";
+import { WithdrawDto } from "./dto/withdraw.dto";
 
 @ApiTags("wallet")
 @ApiBearerAuth()
@@ -38,6 +39,15 @@ export class WalletController {
   // a promo bonus, etc.), not a self-service top-up — the app's own "Add
   // Money" button in the wallet screen should be treated as not-yet-wired
   // to real money until this is replaced with payment-provider verification.
+  // Cash out a COD balance. The sender's own money, so no admin role — but
+  // the amount is checked against their real balance server-side, because a
+  // client-supplied amount is a request, not a fact.
+  @Post("withdraw")
+  @ApiOperation({ summary: "Withdraw a positive wallet balance to JazzCash, Easypaisa or a bank" })
+  withdraw(@CurrentUser() user: { userId: string }, @Body() dto: WithdrawDto) {
+    return this.ledgerService.requestWithdrawal(user.userId, dto.amount, `${dto.method}:${dto.destination}`);
+  }
+
   @Post("admin/topup/:userId")
   @Roles("ADMIN")
   async adminTopUp(@Param("userId") userId: string, @Body() dto: TopUpDto) {

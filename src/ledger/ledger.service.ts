@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { splitFare } from "./commission.util";
 import { DRIVER_CREDIT_LIMIT_PKR } from "../location/location.service";
@@ -214,6 +214,50 @@ export class LedgerService {
         netAmount: amount,
       },
     });
+  }
+
+  /**
+   * Cash out a positive balance — how a sender actually receives their COD money.
+   *
+   * The COD credit lands the moment the recipient pays the driver, so the
+   * driver never rides back to the shop. This is the other end: the sender
+   * turns that balance into real money in their JazzCash / Easypaisa / bank
+   * account.
+   *
+   * The ledger row is written immediately and the balance drops immediately,
+   * which is deliberate — it stops the same balance being withdrawn twice
+   * while a payout is being processed by hand. Actually sending the money is
+   * an ops action today; when a disbursement API is wired up, it becomes the
+   * second half of this method rather than a new flow.
+   */
+  async requestWithdrawal(userId: string, amount: number, destination: string) {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException("Enter an amount greater than zero");
+    }
+    const { balance } = await this.getBalance(userId);
+    if (amount > balance) {
+      throw new BadRequestException(
+        `You can withdraw up to ${balance.toFixed(2)}. Requested ${amount.toFixed(2)}.`,
+      );
+    }
+
+    const entry = await this.prisma.ledgerEntry.create({
+      data: {
+        userId,
+        type: "WALLET_WITHDRAWAL",
+        grossAmount: amount,
+        // Negative: the platform no longer owes them this once it's paid out.
+        netAmount: -amount,
+      },
+    });
+
+    this.logger.log(
+      `Withdrawal requested: user ${userId}, ${amount.toFixed(2)} to ${destination}. Entry ${entry.id} — pay this out manually.`,
+    );
+    return {
+      ...entry,
+      message: "Withdrawal requested. It'll reach your account within one working day.",
+    };
   }
 
   /** Running balance = sum of every ledger entry's netAmount for this user.

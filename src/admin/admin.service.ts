@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { LocationGateway } from "../location/location.gateway";
 import { LocationService } from "../location/location.service";
+import { DRIVER_CREDIT_LIMIT_PKR } from "../location/location.service";
 
 // Typed against the real Prisma enums, not plain strings — a bare
 // string[] literal doesn't satisfy Prisma's `status: { in: TripStatus[] }`
@@ -21,6 +22,49 @@ export class AdminService {
     private locationGateway: LocationGateway,
     private locationService: LocationService,
   ) {}
+
+  /**
+   * Every driver who owes the platform money, worst first.
+   *
+   * This is the ops side of the credit limit. Matching stops offering work to
+   * a driver past DRIVER_CREDIT_LIMIT_PKR, and until there's a payment gateway
+   * webhook, the ONLY way back is a human recording that the driver paid —
+   * which needs a screen showing who's blocked and how much clears them.
+   * Without it the cap is a trap: it stops drivers earning and offers no exit.
+   */
+  async listDriverBalances() {
+    const drivers = await this.prisma.user.findMany({
+      where: { role: "DRIVER" },
+      select: { id: true, name: true, phone: true, isActive: true, kycStatus: true },
+      take: 500,
+    });
+    if (drivers.length === 0) return [];
+
+    const ids = drivers.map((d) => d.id);
+    const sums = await this.prisma.ledgerEntry.groupBy({
+      by: ["userId"],
+      where: { userId: { in: ids } },
+      _sum: { netAmount: true },
+    });
+    const balanceById = new Map(
+      sums.map((s) => [s.userId, s._sum.netAmount ? Number(s._sum.netAmount) : 0]),
+    );
+
+    return drivers
+      .map((d) => {
+        const balance = balanceById.get(d.id) ?? 0;
+        return {
+          ...d,
+          balance,
+          blocked: DRIVER_CREDIT_LIMIT_PKR !== 0 && balance <= -DRIVER_CREDIT_LIMIT_PKR,
+          creditLimit: DRIVER_CREDIT_LIMIT_PKR === 0 ? null : -DRIVER_CREDIT_LIMIT_PKR,
+          // What ops should collect to bring them back to zero.
+          amountToSettle: balance < 0 ? Math.abs(balance) : 0,
+        };
+      })
+      // Most indebted first — that's the call list, in order.
+      .sort((a, b) => a.balance - b.balance);
+  }
 
   async getStats() {
     const [activeTrips, activeDeliveries, onlineDrivers, pendingKyc, totalUsers, totalDrivers] = await Promise.all([

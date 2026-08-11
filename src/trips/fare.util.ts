@@ -25,9 +25,18 @@ export const FARE_CONFIG = {
   // customer can currently reach a flow that uses them.
   RICKSHAW: { base: 60, perKm: 7, perMin: 1.5, minimum: 100 },
   CAR: { base: 100, perKm: 12, perMin: 2, minimum: 200 },
-  PARCEL: { base: 40, perKm: 6, perMin: 1, minimum: 100 },
-  FOOD: { base: 50, perKm: 6, perMin: 1, minimum: 80 },
-  ERRAND: { base: 80, perKm: 6, perMin: 1.5, minimum: 150 },
+  // Parcel and errand ride the SAME bike, burning the SAME petrol over the
+  // same road, so they share the ride's Rs 22/km. Only the base differs, and
+  // only where the work differs: a parcel is a ride carrying a box, an errand
+  // adds shopping time and the driver fronting their own cash.
+  //
+  // Per-minute stays 0 across all three for the same reason it's 0 on rides:
+  // a fixed distance quote can be shown before booking and can't be argued
+  // with afterwards. Charging for Karachi traffic time is how a quoted fare
+  // becomes a dispute at the kerb.
+  PARCEL: { base: 60, perKm: 22, perMin: 0, minimum: 150 },
+  FOOD: { base: 50, perKm: 22, perMin: 0, minimum: 120 },
+  ERRAND: { base: 80, perKm: 22, perMin: 0, minimum: 180 },
 } as const;
 
 const EARTH_RADIUS_KM = 6371;

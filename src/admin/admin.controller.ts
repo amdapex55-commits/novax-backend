@@ -57,6 +57,12 @@ export class AdminController {
 
   // --- Live supply ---
 
+  @Get("drivers/balances")
+  @ApiOperation({ summary: "Driver wallet balances — who owes, who's blocked, most indebted first" })
+  getDriverBalances() {
+    return this.adminService.listDriverBalances();
+  }
+
   @Get("drivers/live")
   @ApiOperation({ summary: "Drivers online now, with what each is currently doing" })
   getLiveDrivers() {
