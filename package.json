@@ -6,8 +6,8 @@
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
-    "start": "prisma migrate deploy && node dist/main",
-    "migrate:deploy": "prisma migrate deploy",
+    "start": "node scripts/db-deploy.js && node dist/main",
+    "migrate:deploy": "node scripts/db-deploy.js",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --fix",

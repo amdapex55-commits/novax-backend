@@ -161,33 +161,42 @@ git push -u origin main
 4. Point Railway's health check at **`/health/ready`** (not `/health`) — see below.
 5. Push to `main` → auto-deploys.
 
-### ⚠️ One-time: baseline the existing production database
+### Migrations, and the P3005 baseline
 
-The deploy command changed from `prisma db push` to `prisma migrate deploy`, and the
-first real migration (`prisma/migrations/0_init/`) has been added.
+The deploy command is `node scripts/db-deploy.js && node dist/main`, not a bare
+`prisma migrate deploy`. That script exists because of one specific failure:
 
-**The existing production database already has these tables** — created by the old
-`db push` — but has no `_prisma_migrations` table to prove it. `migrate deploy` sees a
-non-empty schema it has no record of creating and refuses to touch it:
+This project ran `prisma db push` for its whole life, which creates tables without
+recording anything in `_prisma_migrations`. The first `migrate deploy` therefore met a
+database full of tables Prisma had no record of creating, and refused to touch it — the
+container crashed on boot with:
 
 ```
 Error: P3005 The database schema is not empty.
 ```
 
-So the next deploy fails until you tell Prisma "these tables are already here". Run this
-**once**, locally, with `DATABASE_URL` pointing at the production database:
+The documented fix is a one-off `prisma migrate resolve --applied 0_init` run by hand
+against production. That works exactly once, from a machine that happens to hold the
+production credentials, and is forgotten by the time anyone spins up staging — where the
+identical crash then happens to someone with less context.
+
+So `scripts/db-deploy.js` does it automatically, and handles all three cases:
+
+| Database state | What happens |
+|---|---|
+| Brand new / empty | Every migration applied from scratch |
+| Existing `db push` schema, no history | `0_init` marked as applied, then later migrations run |
+| Already migrated | No-op |
+
+Baselining writes **one row** to `_prisma_migrations` and executes **none** of `0_init`'s
+SQL, so live data is never touched. The script never creates, drops or alters anything
+itself — it only decides which `prisma` command to call.
+
+If you ever want to do it manually instead:
 
 ```bash
 DATABASE_URL="<railway-postgres-url>" npx prisma migrate resolve --applied 0_init
 ```
-
-That only inserts a row into `_prisma_migrations`; it runs none of the SQL and changes no
-tables. Verify with `npx prisma migrate status` — it should say the database is up to
-date — then deploy. Every migration after this one applies normally.
-
-> A brand-new database (a fresh staging environment, or a local `docker compose` volume
-> you've never pushed to) needs none of this — `migrate deploy` just applies `0_init`
-> from scratch.
 
 ### Health checks
 
