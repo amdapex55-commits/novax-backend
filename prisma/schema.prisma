@@ -421,6 +421,7 @@ enum LedgerEntryType {
   FOOD_ORDER_RESTAURANT_PAYOUT // items total minus platform commission, owed to the restaurant
   ERRAND_PAYOUT // service fee owed to the driver for a buy-for-me errand
   TRIP_TIP // "Fast Match" tip, passed to the driver in full — no commission
+  PARCEL_COD_CREDIT // COD cash owed to the SENDER, credited the moment the recipient pays
 }
 
 // Not strict double-entry (no separate "platform" account to balance

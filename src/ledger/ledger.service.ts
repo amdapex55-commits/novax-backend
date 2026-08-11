@@ -1,10 +1,12 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { splitFare } from "./commission.util";
 import { DRIVER_CREDIT_LIMIT_PKR } from "../location/location.service";
 
 @Injectable()
 export class LedgerService {
+  private readonly logger = new Logger(LedgerService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async recordTripPayout(
@@ -60,7 +62,13 @@ export class LedgerService {
    * between the two resolving can leave just one committed, silently
    * understating (or overstating) what the platform owes this driver.
    * prisma.$transaction() wraps them in a single DB transaction instead. */
-  async recordDeliveryPayout(driverId: string, deliveryId: string, fare: number | { toString(): string }, codAmount?: number | { toString(): string } | null) {
+  async recordDeliveryPayout(
+    driverId: string,
+    deliveryId: string,
+    fare: number | { toString(): string },
+    codAmount?: number | { toString(): string } | null,
+    senderId?: string | null,
+  ) {
     const split = splitFare(fare);
     const codNumber = codAmount != null ? Number(codAmount) : null;
 
@@ -94,6 +102,36 @@ export class LedgerService {
           },
         }),
       );
+
+      // The other half of that COD, which was missing entirely: the money the
+      // recipient just handed the driver belongs to the SENDER, and until now
+      // nothing credited them with it. The driver was correctly debited and
+      // the sender was owed by nobody.
+      //
+      // Crediting it here is what removes the return trip. Without it the
+      // driver has to ride back to the shop to hand over cash, which doubles
+      // the distance of every COD parcel and destroys the unit economics. The
+      // sender sees the balance immediately and withdraws it separately; the
+      // cash itself reaches us through the driver's wallet top-up.
+      if (senderId) {
+        ops.push(
+          this.prisma.ledgerEntry.create({
+            data: {
+              userId: senderId,
+              type: "PARCEL_COD_CREDIT",
+              deliveryId,
+              grossAmount: codNumber,
+              netAmount: codNumber,
+            },
+          }),
+        );
+      } else {
+        // Loud, because a COD parcel with no sender recorded means somebody's
+        // money is sitting in a driver's pocket with no ledger claim on it.
+        this.logger.error(
+          `COD delivery ${deliveryId} settled with no senderId — Rs ${codNumber} is unattributed. This needs manual reconciliation.`,
+        );
+      }
     }
 
     return this.prisma.$transaction(ops);

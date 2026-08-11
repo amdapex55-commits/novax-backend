@@ -168,7 +168,7 @@ export class DeliveryService {
     this.locationGateway.emitToUser(delivery.senderId, "delivery:delivered", { deliveryId, fare: delivery.fare ? Number(delivery.fare) : null });
 
     if (delivery.fare) {
-      await this.ledgerService.recordDeliveryPayout(driverId, deliveryId, delivery.fare, delivery.codAmount);
+      await this.ledgerService.recordDeliveryPayout(driverId, deliveryId, delivery.fare, delivery.codAmount, delivery.senderId);
     }
     await this.loyaltyService.awardDeliveryCompletionPoints(delivery.senderId);
 
