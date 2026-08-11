@@ -1,7 +1,7 @@
-# Nova X Logistics — Backend (Auth, Users, Trips, Live Location, Delivery, Uploads, Ledger, Ratings)
+# Nova Go Logistics — Backend (Auth, Users, Trips, Live Location, Delivery, Uploads, Ledger, Ratings)
 
 This is the engineering roadmap in progress: a NestJS modular monolith, built so it can
-grow into delivery/freight without a rewrite. See `NovaX_Engineering_Roadmap.docx` for
+grow into delivery/freight without a rewrite. See `NovaGo_Engineering_Roadmap.docx` for
 the full architecture this fits into.
 
 ## What's here
@@ -158,4 +158,46 @@ git push -u origin main
 2. Connect this GitHub repo — Railway auto-detects the NestJS build.
 3. Set the same environment variables from `.env.example` in Railway's dashboard,
    pointing `DATABASE_URL`/`REDIS_URL` at the managed instances it created.
-4. Push to `main` → auto-deploys.
+4. Point Railway's health check at **`/health/ready`** (not `/health`) — see below.
+5. Push to `main` → auto-deploys.
+
+### ⚠️ One-time: baseline the existing production database
+
+The deploy command changed from `prisma db push` to `prisma migrate deploy`, and the
+first real migration (`prisma/migrations/0_init/`) has been added.
+
+**The existing production database already has these tables** — created by the old
+`db push` — but has no `_prisma_migrations` table to prove it. `migrate deploy` sees a
+non-empty schema it has no record of creating and refuses to touch it:
+
+```
+Error: P3005 The database schema is not empty.
+```
+
+So the next deploy fails until you tell Prisma "these tables are already here". Run this
+**once**, locally, with `DATABASE_URL` pointing at the production database:
+
+```bash
+DATABASE_URL="<railway-postgres-url>" npx prisma migrate resolve --applied 0_init
+```
+
+That only inserts a row into `_prisma_migrations`; it runs none of the SQL and changes no
+tables. Verify with `npx prisma migrate status` — it should say the database is up to
+date — then deploy. Every migration after this one applies normally.
+
+> A brand-new database (a fresh staging environment, or a local `docker compose` volume
+> you've never pushed to) needs none of this — `migrate deploy` just applies `0_init`
+> from scratch.
+
+### Health checks
+
+- **`GET /health`** — liveness. Always 200 while the process is serving. No dependency
+  checks, deliberately: a Postgres outage shouldn't get the container killed and
+  restarted, because restarting fixes nothing. Point uptime monitors here.
+- **`GET /health/ready`** — readiness. Pings Postgres and Redis in parallel (2s timeout
+  each) and returns **503** if either is unreachable. Point Railway's health check here,
+  so a new container that can't reach its database never takes traffic during a deploy.
+
+Both are unauthenticated and exempt from rate limiting — the platform's health checker
+has no credentials, and at the global 20-requests/60s limit it would otherwise throttle
+itself into declaring the service dead.

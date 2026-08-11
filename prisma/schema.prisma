@@ -1,4 +1,4 @@
-// Nova X Logistics - core schema (Phase 1: auth + users)
+// Nova Go Logistics - core schema (Phase 1: auth + users)
 // Trip, Delivery, LedgerEntry, Rating models get added in Phase 2 (see README).
 
 generator client {
@@ -199,7 +199,7 @@ model SupportTicket {
   @@map("support_tickets")
 }
 
-// "Nova X for Business" interest form. No corporate-account system exists
+// "Nova Go for Business" interest form. No corporate-account system exists
 // yet (multi-user billing, invoicing — a real product scope, not a
 // weekend feature) so this captures the lead for manual follow-up instead
 // of pretending a self-serve corporate dashboard exists.
@@ -324,6 +324,15 @@ model Trip {
   // JS numbers in and out at every call site (Number(trip.fare) on read).
   fare        Decimal?   @db.Decimal(10, 2) // final agreed fare (PKR)
   offeredFare Decimal?   @db.Decimal(10, 2) // rider's bid, when fareType = BID
+  // "Fast Match" tip — an optional amount the customer adds at booking to make
+  // the job more attractive, shown to the driver in the offer.
+  //
+  // Stored SEPARATELY from `fare` rather than folded into it, because the two
+  // are treated differently at settlement: the platform takes no commission on
+  // a tip (see commission.util.ts). Merging them would quietly bill the driver
+  // 15% of money the customer specifically meant for them, which is the exact
+  // behaviour that makes riders stop trusting a tipping feature.
+  tipAmount   Decimal?   @db.Decimal(10, 2)
 
   requestedAt DateTime   @default(now())
   matchedAt   DateTime?
@@ -411,6 +420,7 @@ enum LedgerEntryType {
   FOOD_ORDER_DRIVER_PAYOUT   // delivery fee owed to the driver for a food order
   FOOD_ORDER_RESTAURANT_PAYOUT // items total minus platform commission, owed to the restaurant
   ERRAND_PAYOUT // service fee owed to the driver for a buy-for-me errand
+  TRIP_TIP // "Fast Match" tip, passed to the driver in full — no commission
 }
 
 // Not strict double-entry (no separate "platform" account to balance

@@ -13,7 +13,7 @@ export class RequestOtpDto {
   referralCode?: string;
 
   // Which "front door" this signup came through — the rider app's default
-  // Sign In, the "Drive with Nova X" flow, or "List your restaurant". Only
+  // Sign In, the "Drive with Nova Go" flow, or "List your restaurant". Only
   // read on first signup (see auth.service.requestOtp); an existing account
   // can't change its own role by re-requesting an OTP with a different value.
   @ApiPropertyOptional({ example: "DRIVER", enum: ["DRIVER", "RESTAURANT"] })

@@ -6,9 +6,16 @@ import { splitFare } from "./commission.util";
 export class LedgerService {
   constructor(private prisma: PrismaService) {}
 
-  async recordTripPayout(driverId: string, tripId: string, fare: number | { toString(): string }) {
+  async recordTripPayout(
+    driverId: string,
+    tripId: string,
+    fare: number | { toString(): string },
+    tipAmount?: number | { toString(): string } | null,
+  ) {
     const split = splitFare(fare);
-    return this.prisma.ledgerEntry.create({
+    const tip = tipAmount != null ? Number(tipAmount) : 0;
+
+    const payout = this.prisma.ledgerEntry.create({
       data: {
         userId: driverId,
         type: "TRIP_PAYOUT",
@@ -19,6 +26,31 @@ export class LedgerService {
         netAmount: split.netAmount,
       },
     });
+
+    if (!(tip > 0)) return payout;
+
+    // The tip is its own entry with commissionRate 0 and net === gross. Two
+    // reasons it isn't just added to the payout's netAmount: the driver can
+    // see on their statement that the tip reached them untouched, and the
+    // 15% commission demonstrably never applies to it.
+    //
+    // Both rows describe one event (a trip completing), so they commit
+    // together — same reasoning as recordDeliveryPayout below.
+    const [entry] = await this.prisma.$transaction([
+      payout,
+      this.prisma.ledgerEntry.create({
+        data: {
+          userId: driverId,
+          type: "TRIP_TIP",
+          tripId,
+          grossAmount: tip,
+          commissionRate: 0,
+          commissionAmount: 0,
+          netAmount: tip,
+        },
+      }),
+    ]);
+    return entry;
   }
 
   /** Two ledger entries (driver payout + COD liability) describe ONE real
@@ -125,7 +157,7 @@ export class LedgerService {
 
   /** ADMIN-ONLY manual credit (see wallet.controller.ts).
    *
-   * Nova X launches CASH-ONLY: riders pay drivers cash, parcels/food are COD.
+   * Nova Go launches CASH-ONLY: riders pay drivers cash, parcels/food are COD.
    * There is no consumer top-up, because there's no payment gateway — and an
    * endpoint that mints balance without one is just free money.
    *

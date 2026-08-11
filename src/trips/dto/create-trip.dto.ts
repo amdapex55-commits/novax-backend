@@ -1,4 +1,4 @@
-import { IsEnum, IsLatitude, IsLongitude, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
+import { IsEnum, IsLatitude, IsLongitude, IsNumber, IsOptional, IsPositive, IsString, Max, MaxLength, Min } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export enum VehicleTypeDto {
@@ -81,6 +81,22 @@ export class CreateTripDto {
   @IsOptional()
   @IsString()
   pickupNoteAudioUrl?: string;
+
+  /**
+   * "Fast Match" tip, in PKR — an optional amount added at booking to make the
+   * job more attractive to a nearby driver.
+   *
+   * Capped server-side. The UI only offers Rs 20 and Rs 50, but the cap is
+   * what actually holds: without it a fat-fingered or modified client can
+   * commit a customer to a tip larger than the fare, in a market where the
+   * whole thing is settled in cash at the roadside.
+   */
+  @ApiPropertyOptional({ description: "Optional Fast Match tip in PKR", example: 20, maximum: 500 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(500)
+  tipAmount?: number;
 
   /** GPS accuracy of the pickup in metres, as reported by the device. */
   @ApiPropertyOptional({ description: "Pickup GPS accuracy in metres", example: 18 })

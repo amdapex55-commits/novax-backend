@@ -11,7 +11,7 @@ async function main() {
     credentials: { accessKeyId: "", secretAccessKey: "" },
     forcePathStyle: true,
   });
-  const command = new PutObjectCommand({ Bucket: "novax-uploads", Key: "kyc-doc/u1/x.jpg", ContentType: "image/jpeg" });
+  const command = new PutObjectCommand({ Bucket: "novago-uploads", Key: "kyc-doc/u1/x.jpg", ContentType: "image/jpeg" });
   const url = await getSignedUrl(s3, command, { expiresIn: 300 });
   console.log("NO ERROR THROWN. Generated URL:", url);
 }

@@ -78,8 +78,8 @@ export class SmsService {
     const webOtpLine = domain ? `\n\n@${domain} #${code}` : "";
 
     const body =
-      `${code} is your Nova X code. Never share it with anyone, ` +
-      `including Nova X staff.${webOtpLine}`;
+      `${code} is your Nova Go code. Never share it with anyone, ` +
+      `including Nova Go staff.${webOtpLine}`;
 
     const params = new URLSearchParams({ To: phone, From: from, Body: body });
     const auth = Buffer.from(`${sid}:${token}`).toString("base64");

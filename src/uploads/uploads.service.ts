@@ -18,7 +18,7 @@ export class UploadsService {
     const accountId = this.config.get<string>("R2_ACCOUNT_ID", "");
     const accessKeyId = this.config.get<string>("R2_ACCESS_KEY_ID", "");
     const secretAccessKey = this.config.get<string>("R2_SECRET_ACCESS_KEY", "");
-    this.bucket = this.config.get<string>("R2_BUCKET_NAME", "novax-uploads");
+    this.bucket = this.config.get<string>("R2_BUCKET_NAME", "novago-uploads");
     this.publicUrlBase = this.config.get<string>("R2_PUBLIC_URL_BASE", "");
 
     // Presigning is pure local crypto (SigV4) — it never contacts R2, so a

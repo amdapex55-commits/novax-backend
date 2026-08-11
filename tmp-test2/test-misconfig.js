@@ -12,7 +12,7 @@ async function main() {
         credentials: { accessKeyId: "", secretAccessKey: "" },
         forcePathStyle: true,
     });
-    const command = new client_s3_1.PutObjectCommand({ Bucket: "novax-uploads", Key: "kyc-doc/u1/x.jpg", ContentType: "image/jpeg" });
+    const command = new client_s3_1.PutObjectCommand({ Bucket: "novago-uploads", Key: "kyc-doc/u1/x.jpg", ContentType: "image/jpeg" });
     const url = await (0, s3_request_presigner_1.getSignedUrl)(s3, command, { expiresIn: 300 });
     console.log("NO ERROR THROWN. Generated URL:", url);
 }

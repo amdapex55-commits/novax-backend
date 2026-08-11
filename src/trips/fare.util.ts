@@ -1,4 +1,4 @@
-// Nova X — fare calculation.
+// Nova Go — fare calculation.
 //
 // ⚠️ THESE NUMBERS MUST MATCH js/launch.config.js IN THE FRONTEND.
 // The app shows a fare estimate before it has a server answer; if the two

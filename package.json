@@ -1,12 +1,13 @@
 {
   "name": "novax-backend",
   "version": "0.1.0",
-  "description": "Nova X Logistics - backend monolith (auth, users, trips, location, delivery)",
+  "description": "Nova Go Logistics - backend monolith (auth, users, trips, location, delivery)",
   "private": true,
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
-    "start": "prisma db push --skip-generate && node dist/main",
+    "start": "prisma migrate deploy && node dist/main",
+    "migrate:deploy": "prisma migrate deploy",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --fix",
@@ -14,7 +15,20 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prestart": "node -e \"require('fs').existsSync('dist/main.js')||(console.error('\\n[NovaX] dist/main.js is missing \u2014 the TypeScript build did not run.\\n  Cause: NODE_ENV=production makes npm skip devDependencies, which is where the Nest CLI and tsc live.\\n  Fix: install with --include=dev (see nixpacks.toml), or set NPM_CONFIG_PRODUCTION=false.\\n'),process.exit(1))\""
+    "prestart": "node -e \"require('fs').existsSync('dist/main.js')||(console.error('\\n[NovaGo] dist/main.js is missing — the TypeScript build did not run.\\n  Cause: NODE_ENV=production makes npm skip devDependencies, which is where the Nest CLI and tsc live.\\n  Fix: install with --include=dev (see nixpacks.toml), or set NPM_CONFIG_PRODUCTION=false.\\n'),process.exit(1))\""
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "testEnvironment": "node"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.632.0",
@@ -41,6 +55,7 @@
     "class-validator": "^0.14.1",
     "ioredis": "^5.4.1",
     "libphonenumber-js": "^1.13.10",
+    "nestjs-throttler-storage-redis": "^0.5.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "prisma": "^5.19.0",

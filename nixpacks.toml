@@ -21,6 +21,26 @@
 #
 # This file now only pins the phases explicitly. If Railway honours it, good;
 # if it ignores it (as it did before), the build still works.
+#
+# ---------------------------------------------------------------------------
+# Why migrations run in [start] and not in [phases.build]
+#
+# The old start command was `prisma db push`, which is genuinely dangerous on a
+# live database: it diffs the schema and will silently drop a column to make
+# reality match the file. That had to go.
+#
+# The obvious replacement is to migrate during the build phase. Don't. Railway
+# builds run in a builder that has no route to the Postgres private network, so
+# a build-phase migration fails to connect on a good day and, on a bad one,
+# succeeds against the wrong database.
+#
+# `prisma migrate deploy` in the start command is the safe version of what
+# "migrations out of boot" was actually asking for:
+#   - it only ever applies migration files forward; it never drops anything
+#   - it is a no-op costing ~100ms once the database is up to date
+#   - it takes a Postgres advisory lock, so N replicas booting at once is safe;
+#     one applies, the rest wait and then no-op
+# ---------------------------------------------------------------------------
 
 [phases.install]
 cmds = ["npm ci"]

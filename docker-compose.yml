@@ -3,26 +3,26 @@ version: "3.9"
 services:
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: novax-postgres
+    container_name: novago-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: novax
-      POSTGRES_PASSWORD: novax
-      POSTGRES_DB: novax
+      POSTGRES_USER: novago
+      POSTGRES_PASSWORD: novago
+      POSTGRES_DB: novago
     ports:
       - "5432:5432"
     volumes:
-      - novax_pg_data:/var/lib/postgresql/data
+      - novago_pg_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
-    container_name: novax-redis
+    container_name: novago-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
-      - novax_redis_data:/data
+      - novago_redis_data:/data
 
 volumes:
-  novax_pg_data:
-  novax_redis_data:
+  novago_pg_data:
+  novago_redis_data:

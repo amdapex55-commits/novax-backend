@@ -99,7 +99,7 @@ export class AdminService {
       userId,
       isActive ? "Account reactivated" : "Account suspended",
       isActive
-        ? "Your Nova X account is active again."
+        ? "Your Nova Go account is active again."
         : reason || "Your account has been suspended. Please contact support.",
     );
 
@@ -137,10 +137,18 @@ export class AdminService {
     // driver list and nothing to plot — the list was previously returned
     // with no coordinates at all, so the map could only ever be empty.
     // One GEOPOS call for the whole fleet, not one per driver.
-    const positions = await this.locationService.getDriverLocations(ids);
+    // ...and how old each of those positions is. A coordinate with no age is
+    // a coordinate ops will trust unconditionally, including the one belonging
+    // to a phone that died at a junction twenty minutes ago.
+    const [positions, lastFixes] = await Promise.all([
+      this.locationService.getDriverLocations(ids),
+      this.locationService.getLastFixTimes(ids),
+    ]);
+    const now = Date.now();
 
     return profiles.map((p) => {
       const pos = positions.get(p.userId) || null;
+      const lastFixAt = lastFixes.get(p.userId) ?? null;
       return {
         ...p,
         currentJob: busy.get(p.userId) || null,
@@ -149,6 +157,11 @@ export class AdminService {
         // and null is meaningful: online but hasn't sent a location ping yet.
         lat: pos?.lat ?? null,
         lng: pos?.lng ?? null,
+        lastFixAt: lastFixAt ? new Date(lastFixAt).toISOString() : null,
+        // Precomputed so the browser doesn't have to trust its own clock —
+        // an ops laptop with a skewed clock would otherwise mark the whole
+        // fleet stale, or none of it.
+        fixAgeSeconds: lastFixAt === null ? null : Math.max(0, Math.round((now - lastFixAt) / 1000)),
       };
     });
   }
@@ -375,7 +388,7 @@ export class AdminService {
     await this.notificationsService.create(
       driverId,
       "Job assigned to you",
-      "Nova X ops assigned you a job directly — open the app to see it.",
+      "Nova Go ops assigned you a job directly — open the app to see it.",
     );
     this.locationGateway.emitToUser(driverId, "job:manuallyAssigned", { jobType, jobId });
 

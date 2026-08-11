@@ -100,6 +100,9 @@ export class TripsService {
         pickupNoteAudioUrl: dto.pickupNoteAudioUrl,
         fare,
         offeredFare: dto.offeredFare,
+        // Kept out of `fare` on purpose — the tip is settled to the driver in
+        // full, with no commission taken (see completeTrip / commission.util).
+        tipAmount: dto.tipAmount && dto.tipAmount > 0 ? dto.tipAmount : null,
       },
     });
 
@@ -147,6 +150,10 @@ export class TripsService {
       vehicleType: trip.vehicleType,
       fareType: trip.fareType,
       fare: trip.fare ? Number(trip.fare) : null,
+      // The tip is the entire point of Fast Match — it only makes a job more
+      // attractive if the driver can see it while deciding, so it rides in
+      // the offer payload alongside the fare.
+      tipAmount: trip.tipAmount ? Number(trip.tipAmount) : null,
       distanceKm: trip.distanceKm,
     });
 
@@ -236,7 +243,7 @@ export class TripsService {
     // confirmed trip.driverId === driverId above, so this can't be a trip
     // that somehow completed without a matched driver.
     if (trip.fare) {
-      await this.ledgerService.recordTripPayout(driverId, tripId, trip.fare);
+      await this.ledgerService.recordTripPayout(driverId, tripId, trip.fare, updated.tipAmount);
     }
     await this.loyaltyService.awardTripCompletionPoints(trip.riderId);
 

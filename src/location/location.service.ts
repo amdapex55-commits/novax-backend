@@ -9,6 +9,31 @@ export interface NearbyDriver {
 
 const GEO_KEY = "drivers:geo"; // single-city MVP; shard per-city (drivers:geo:<city>) once you have more than one
 
+/**
+ * How old a driver's last GPS fix may be before we stop offering them work.
+ *
+ * The failure this prevents: a driver's app is killed or their phone dies, but
+ * GEOADD left them sitting in the geo set at their last known corner. Matching
+ * picks them as "nearest", burns the full 15-second accept window waiting for a
+ * phone that isn't listening, then cascades to the next driver. The passenger
+ * pays for that in wall-clock time, and it compounds — three dead phones ahead
+ * of a live one is a 45-second wait before anyone's screen even lights up.
+ *
+ * 3 minutes is deliberately loose: drivers ping every 3-5s, so a live driver is
+ * never near this, and the slack absorbs a tunnel or a moment of bad signal
+ * without dropping someone who is genuinely working.
+ */
+const MAX_FIX_AGE_MS = 3 * 60 * 1000;
+
+/**
+ * The last-seen key has to outlive MAX_FIX_AGE_MS by a wide margin. If it
+ * expired at the threshold, "stale" and "never sent a ping" would be the same
+ * missing key, and there'd be no way to log how stale a pruned driver was.
+ */
+const LASTSEEN_TTL_SECONDS = 15 * 60;
+
+const lastSeenKey = (driverId: string) => `driver:lastseen:${driverId}`;
+
 @Injectable()
 export class LocationService {
   private readonly logger = new Logger(LocationService.name);
@@ -23,13 +48,24 @@ export class LocationService {
     // GEOADD stores members on a sphere internally — no separate lat/lng columns needed
     // for the "who's nearby" query, that's the whole point of using Redis here.
     await this.redis.client.geoadd(GEO_KEY, lng, lat, driverId);
-    // Track last-seen so a stale ping (app killed, phone died) can be pruned later
-    // by a cron job rather than lingering forever in the geo index.
-    await this.redis.client.set(`driver:lastseen:${driverId}`, Date.now().toString(), "EX", 120);
+    // Track last-seen so a stale ping (app killed, phone died) can be pruned.
+    // This is read on every match attempt by filterEligible() — there is no
+    // cron job, and there doesn't need to be: matching prunes as it goes.
+    await this.redis.client.set(
+      lastSeenKey(driverId),
+      Date.now().toString(),
+      "EX",
+      LASTSEEN_TTL_SECONDS,
+    );
   }
 
   async removeDriver(driverId: string) {
-    await this.redis.client.zrem(GEO_KEY, driverId);
+    // Drop the position AND the last-seen marker together — leaving the marker
+    // behind would make a driver who went offline cleanly look merely stale.
+    await Promise.all([
+      this.redis.client.zrem(GEO_KEY, driverId),
+      this.redis.client.del(lastSeenKey(driverId)),
+    ]);
   }
 
   /** Trips module calls this to find match candidates, closest first. */
@@ -79,7 +115,14 @@ export class LocationService {
   private async filterEligible(candidates: NearbyDriver[]): Promise<NearbyDriver[]> {
     if (candidates.length === 0) return [];
 
-    const ids = candidates.map((c) => c.driverId);
+    // Freshness first, deliberately: a dead phone is the cheapest thing to
+    // rule out (one MGET for the whole candidate list) and doing it here
+    // means the database query below only asks about drivers who could
+    // actually answer.
+    const fresh = await this.filterFreshFixes(candidates);
+    if (fresh.length === 0) return [];
+
+    const ids = fresh.map((c) => c.driverId);
     const allowed = await this.prisma.user.findMany({
       where: {
         id: { in: ids },
@@ -102,7 +145,54 @@ export class LocationService {
       await Promise.all(rejected.map((id) => this.removeDriver(id).catch(() => {})));
     }
 
-    return candidates.filter((c) => allowedIds.has(c.driverId));
+    return fresh.filter((c) => allowedIds.has(c.driverId));
+  }
+
+  /**
+   * Drop candidates whose last GPS fix is older than MAX_FIX_AGE_MS, and evict
+   * them from the geo set so they stop being candidates at all.
+   *
+   * One MGET covers the whole candidate list, so this costs a single Redis
+   * round trip regardless of how many drivers the search returned.
+   */
+  private async filterFreshFixes(candidates: NearbyDriver[]): Promise<NearbyDriver[]> {
+    const timestamps = await this.redis.client.mget(
+      ...candidates.map((c) => lastSeenKey(c.driverId)),
+    );
+
+    const now = Date.now();
+    const fresh: NearbyDriver[] = [];
+    const stale: { driverId: string; ageMs: number | null }[] = [];
+
+    candidates.forEach((candidate, i) => {
+      const raw = timestamps[i];
+      // A missing key means the driver is in the geo set but hasn't pinged
+      // within LASTSEEN_TTL_SECONDS — far past stale. Treat as dead.
+      if (raw === null || raw === undefined) {
+        stale.push({ driverId: candidate.driverId, ageMs: null });
+        return;
+      }
+      const ageMs = now - Number(raw);
+      // NaN (corrupt value) fails this comparison and lands in `stale`, which
+      // is the right side to fail towards.
+      if (ageMs <= MAX_FIX_AGE_MS) {
+        fresh.push(candidate);
+      } else {
+        stale.push({ driverId: candidate.driverId, ageMs });
+      }
+    });
+
+    if (stale.length) {
+      this.logger.warn(
+        `Skipped ${stale.length} driver(s) with stale GPS: ` +
+          stale
+            .map((s) => `${s.driverId}(${s.ageMs === null ? "no fix" : `${Math.round(s.ageMs / 1000)}s`})`)
+            .join(", "),
+      );
+      await Promise.all(stale.map((s) => this.removeDriver(s.driverId).catch(() => {})));
+    }
+
+    return fresh;
   }
 
   /** Food/errand matching needs the same geo search as ride matching, but
@@ -153,6 +243,34 @@ export class LocationService {
       if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
         out.set(id, { lat: latNum, lng: lngNum });
       }
+    });
+    return out;
+  }
+
+  /**
+   * When each driver's position was last updated, for the whole fleet in one
+   * round trip.
+   *
+   * GEOPOS returns a coordinate with no indication of its age, so the ops
+   * fleet map cannot tell a driver moving through traffic from one whose
+   * phone died twenty minutes ago at a junction — both render as a confident
+   * dot. Ops then dispatches to the dot. This is the missing half of that
+   * data: a position plus how much to trust it.
+   *
+   * Drivers with no recorded fix are absent from the map rather than present
+   * with a zero timestamp, so callers can distinguish "never pinged" from
+   * "pinged at the epoch".
+   */
+  async getLastFixTimes(driverIds: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (!driverIds.length) return out;
+
+    const raw = await this.redis.client.mget(...driverIds.map(lastSeenKey));
+    driverIds.forEach((id, i) => {
+      const value = raw[i];
+      if (value === null || value === undefined) return;
+      const ts = Number(value);
+      if (Number.isFinite(ts)) out.set(id, ts);
     });
     return out;
   }

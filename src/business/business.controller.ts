@@ -11,7 +11,7 @@ import { CreateLeadDto } from "./dto/create-lead.dto";
 export class BusinessController {
   constructor(private businessService: BusinessService) {}
 
-  // Deliberately no auth guard — guests browsing the "Nova X for Business"
+  // Deliberately no auth guard — guests browsing the "Nova Go for Business"
   // page can submit interest without creating an account first.
   @Post("leads")
   create(@Body() dto: CreateLeadDto) {

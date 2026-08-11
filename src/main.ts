@@ -24,7 +24,7 @@ async function bootstrap() {
   );
 
   // CORS_ORIGINS is a comma-separated allowlist (e.g.
-  // "https://amdapex55-commits.github.io,https://novax.pk"). Unset =>
+  // "https://amdapex55-commits.github.io,https://novago.pk"). Unset =>
   // wide-open, which is fine for local dev but is exactly how a hostile page
   // in someone's browser gets to call this API with their session, so
   // production is required to set it (see config.validation.ts).
@@ -37,7 +37,7 @@ async function bootstrap() {
   const docsEnabled = process.env.NODE_ENV !== "production" || process.env.ENABLE_DOCS === "true";
   if (docsEnabled) {
     const config = new DocumentBuilder()
-      .setTitle("Nova X Logistics API")
+      .setTitle("Nova Go Logistics API")
       .setDescription("Auth, users, trips, location, delivery — single monolith")
       .setVersion("0.1")
       .addBearerAuth()
@@ -48,7 +48,7 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`Nova X backend running on port ${port}`);
+  console.log(`Nova Go backend running on port ${port}`);
   if (docsEnabled) console.log(`API docs at /api/docs`);
 }
 bootstrap();

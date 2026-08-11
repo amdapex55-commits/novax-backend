@@ -13,7 +13,7 @@ import { LocationService } from "./location.service";
  *
  * PRIVACY — this is the important part. A rider's live position is personal
  * data, and this endpoint is reachable without an account (a guest browsing
- * before signup still needs to see whether Nova X can serve them). So:
+ * before signup still needs to see whether Nova Go can serve them). So:
  *
  *   - No identifiers leave the server. No id, no name, no phone, no plate.
  *     The response is nothing but coordinates.
