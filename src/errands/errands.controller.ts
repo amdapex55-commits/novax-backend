@@ -7,12 +7,14 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ErrandsService } from "./errands.service";
 import { CreateErrandDto } from "./dto/create-errand.dto";
 import { ReportSpendDto } from "./dto/report-spend.dto";
+import { RequiresService } from "../launch/requires-service.decorator";
 
 type ReqUser = { userId: string; role: string };
 
 @ApiTags("errands")
 @ApiBearerAuth()
 @Controller("api/v1/errands")
+@RequiresService("ERRANDS")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ErrandsController {
   constructor(private errandsService: ErrandsService) {}

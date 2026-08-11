@@ -8,12 +8,14 @@ import { DeliveryService } from "./delivery.service";
 import { CreateDeliveryDto } from "./dto/create-delivery.dto";
 import { MarkDeliveredDto } from "./dto/mark-delivered.dto";
 import { RateDto } from "../ratings/dto/rate.dto";
+import { RequiresService } from "../launch/requires-service.decorator";
 
 type ReqUser = { userId: string; role: string };
 
 @ApiTags("delivery")
 @ApiBearerAuth()
 @Controller("api/v1/deliveries")
+@RequiresService("DELIVERY")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DeliveryController {
   constructor(private deliveryService: DeliveryService) {}

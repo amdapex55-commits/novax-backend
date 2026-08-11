@@ -7,12 +7,14 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { FoodOrdersService } from "./food-orders.service";
 import { CreateFoodOrderDto } from "./dto/create-food-order.dto";
 import { RateDto } from "../ratings/dto/rate.dto";
+import { RequiresService } from "../launch/requires-service.decorator";
 
 type ReqUser = { userId: string; role: string };
 
 @ApiTags("food-orders")
 @ApiBearerAuth()
 @Controller("api/v1/food-orders")
+@RequiresService("FOOD")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FoodOrdersController {
   constructor(private foodOrdersService: FoodOrdersService) {}

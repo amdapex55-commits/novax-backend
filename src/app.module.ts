@@ -7,6 +7,8 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { RedisService } from "./redis/redis.service";
 import { HealthModule } from "./health/health.module";
+import { LaunchModule } from "./launch/launch.module";
+import { ServiceEnabledGuard } from "./launch/requires-service.decorator";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 import { LocationModule } from "./location/location.module";
@@ -53,6 +55,7 @@ import { SafetyModule } from "./safety/safety.module";
     PrismaModule,
     RedisModule,
     HealthModule,
+    LaunchModule,
     AuthModule,
     UsersModule,
     LocationModule,
@@ -73,6 +76,11 @@ import { SafetyModule } from "./safety/safety.module";
     AnalyticsModule,
     SafetyModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Global so a parked service can't come back online just because
+    // someone forgot to add a guard to a new controller.
+    { provide: APP_GUARD, useClass: ServiceEnabledGuard },
+  ],
 })
 export class AppModule {}

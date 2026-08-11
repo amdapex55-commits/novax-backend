@@ -9,6 +9,7 @@ import { RatingsService } from "../ratings/ratings.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
+import { LaunchPolicyService } from "../launch/launch-policy.service";
 
 // Weekly driver bonus threshold — see getWeeklyIncentiveProgress(). A flat,
 // code-defined tier rather than an admin-configurable campaign system,
@@ -36,9 +37,22 @@ export class TripsService {
     private ledgerService: LedgerService,
     private ratingsService: RatingsService,
     private loyaltyService: LoyaltyService,
+    private launchPolicy: LaunchPolicyService,
   ) {}
 
   async createTrip(riderId: string, dto: CreateTripDto) {
+    // Pilot rules, enforced here rather than only in the app: bike-only,
+    // fixed-fare, inside the launch zone, inside operating hours. The
+    // frontend already hides all of this, but hiding is not enforcing — a
+    // modified client, a stale cached bundle or plain curl would otherwise
+    // book a car at 3am in a city we don't operate in.
+    this.launchPolicy.assertRideAllowed({
+      vehicleType: dto.vehicleType,
+      fareType: dto.fareType,
+      pickupLat: dto.pickupLat,
+      pickupLng: dto.pickupLng,
+    });
+
     if (dto.fareType === "BID" && !dto.offeredFare) {
       throw new BadRequestException("offeredFare is required when fareType is BID");
     }
