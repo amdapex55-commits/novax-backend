@@ -27,7 +27,12 @@ import { LocationService } from "./location.service";
  * different question from what a stranger's browser is allowed to see.
  */
 @ApiTags("location")
-@Controller("location")
+// api/v1 like every other controller. It was mounted at bare "location",
+// which meant the client's /api/v1/location/nearby call 404'd silently — the
+// customer's booking map simply never showed a rider and nothing errored.
+// Nothing else consumed the old path (the endpoint had never been wired to a
+// screen until now), so moving it breaks no caller.
+@Controller("api/v1/location")
 export class LocationController {
   constructor(private locationService: LocationService) {}
 
