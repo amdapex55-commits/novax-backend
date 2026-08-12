@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, UseGuards, Delete } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -26,6 +26,15 @@ export class UsersController {
   @Patch("me")
   updateMe(@CurrentUser() user: { userId: string }, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(user.userId, dto);
+  }
+
+  // Google Play requires in-app deletion for any app with account creation.
+  // Immediate — a request queue would not satisfy the policy for a signed-in
+  // user, only for the web form (see the public deletion-request route).
+  @Delete("me")
+  @ApiOperation({ summary: "Delete my account. Personal details are erased; anonymous financial records are kept." })
+  deleteMe(@CurrentUser() user: { userId: string }) {
+    return this.usersService.deleteOwnAccount(user.userId);
   }
 
   @Get("me/vehicle")

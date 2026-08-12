@@ -218,6 +218,28 @@ model SupportTicket {
 // yet (multi-user billing, invoicing — a real product scope, not a
 // weekend feature) so this captures the lead for manual follow-up instead
 // of pretending a self-serve corporate dashboard exists.
+// Account deletion requests submitted from the public web form.
+//
+// Google Play requires a deletion route that works WITHOUT the app installed —
+// someone who has uninstalled must still be able to ask. That form has no
+// session, so it can't delete anything directly; it records a request that ops
+// verifies and actions. In-app deletion (DELETE /users/me) is immediate and
+// needs no row here.
+model DeletionRequest {
+  id        String   @id @default(uuid())
+  // Phone or email as typed. Deliberately NOT resolved to a userId here: an
+  // unauthenticated form that confirms whether an identifier exists is a free
+  // account-enumeration oracle.
+  contact   String
+  note      String?
+  status    String   @default("OPEN") // OPEN | COMPLETED | REJECTED
+  handledAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@map("deletion_requests")
+}
+
 model BusinessLead {
   id          String   @id @default(uuid())
   companyName String

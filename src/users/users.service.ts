@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
@@ -8,10 +8,135 @@ import { DriverOnboardingDto } from "./dto/driver-onboarding.dto";
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
   ) {}
+
+  /**
+   * Delete this account. Google Play requires it; the shape below is what makes
+   * it possible without destroying the books.
+   *
+   * ANONYMISE, DO NOT DROP. A hard delete is impossible here and pretending
+   * otherwise would corrupt real records:
+   *   - Ledger entries are financial history. A driver's unsettled commission
+   *     and a customer's completed fares have to survive, or the platform's
+   *     accounts stop reconciling with the cash actually collected.
+   *   - Trips have TWO parties. Deleting a rider would blow away the other
+   *     person's trip history and the driver's earnings record with it.
+   *   - Incidents are a safety log. An SOS record that can be erased by the
+   *     person who caused it is not a safety log.
+   *
+   * So every direct identifier is destroyed — name, email, address, password,
+   * licence and CNIC images, and the phone number is replaced with an
+   * unusable placeholder — while the rows those records point at stay intact
+   * and become unattributable. That satisfies "delete my data" in the sense
+   * that matters: nothing left identifies the person.
+   *
+   * Deliberately NOT blocked by an outstanding balance. Refusing to delete
+   * someone's data because they owe money is not a defensible reading of the
+   * policy. The debt survives as an anonymous ledger row for reconciliation,
+   * and ops is told before the identifiers go.
+   */
+  async deleteOwnAccount(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, phone: true, role: true, name: true },
+    });
+    if (!user) throw new NotFoundException("Account not found");
+
+    const balance = await this.prisma.ledgerEntry.aggregate({
+      where: { userId },
+      _sum: { netAmount: true },
+    });
+    const owed = balance._sum.netAmount ? Number(balance._sum.netAmount) : 0;
+    if (owed < 0) {
+      // Logged loudly BEFORE the identifiers are gone — afterwards there is no
+      // way to work out who this was.
+      this.logger.error(
+        `Account ${userId} (${user.phone}, ${user.name || "unnamed"}) is being deleted with an outstanding balance of ${owed.toFixed(2)}. ` +
+          "The ledger rows survive but are no longer attributable. Reconcile before month end.",
+      );
+    }
+
+    // Unique columns can't just be nulled — the placeholder has to be unique
+    // too, or a second deletion collides on the same value.
+    const tombstone = `deleted-${userId}`;
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          phone: tombstone,
+          email: null,
+          name: "Deleted user",
+          lastName: null,
+          address: null,
+          passwordHash: null,
+          referralCode: null,
+          // Cannot sign in, cannot be matched, cannot be contacted.
+          isActive: false,
+        },
+      }),
+      // Every refresh token, so no live session outlives the deletion.
+      this.prisma.refreshToken.deleteMany({ where: { userId } }),
+      this.prisma.otpCode.deleteMany({ where: { userId } }),
+      // Document images are the most sensitive thing we hold. The URLs go
+      // here; the R2 objects themselves are removed by the ops runbook, since
+      // this backend deliberately has no delete credentials for that bucket.
+      this.prisma.driverProfile.updateMany({
+        where: { userId },
+        data: {
+          cnicNumber: null,
+          cnicFrontUrl: null,
+          cnicBackUrl: null,
+          licenseDocUrl: null,
+          licenseFrontUrl: null,
+          licenseBackUrl: null,
+          vehicleDocUrl: null,
+          vehiclePhotoUrl: null,
+          payoutAccountName: null,
+          payoutAccountNumber: null,
+          isOnline: false,
+        },
+      }),
+    ]);
+
+    this.logger.warn(`Account ${userId} anonymised at the user's request (role ${user.role}).`);
+    return {
+      deleted: true,
+      message:
+        "Your account has been deleted. Your personal details are gone. " +
+        "Anonymous records of completed trips are kept for accounting and safety, as set out in the Privacy Policy.",
+    };
+  }
+
+  /**
+   * Deletion request from the public web form.
+   *
+   * Google Play requires a deletion route reachable WITHOUT the app installed.
+   * That page has no session, so it cannot delete anything — it records a
+   * request for ops to verify and action.
+   *
+   * The response is identical whether or not the contact matches an account.
+   * An unauthenticated endpoint that confirms "yes, that number is registered"
+   * is a free account-enumeration oracle, and the identifier here is a phone
+   * number.
+   */
+  async requestDeletion(contact: string, note?: string) {
+    await this.prisma.deletionRequest.create({
+      data: { contact: contact.trim(), note: note?.trim() || null },
+    });
+    this.logger.warn(`Public deletion request received for "${contact.trim()}" — action within 24h.`);
+    return {
+      received: true,
+      message:
+        "Request received. We'll verify it and delete the account within 24 hours. " +
+        "If you still have the app, you can delete instantly from Profile → Delete account.",
+    };
+  }
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
