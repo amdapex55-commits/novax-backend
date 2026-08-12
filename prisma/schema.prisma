@@ -27,6 +27,21 @@ model User {
   id          String    @id @default(uuid())
   phone       String    @unique
   name        String?
+  // Split from `name` so signup can ask for both and ops can sort a list of
+  // drivers sensibly. `name` stays the first name.
+  lastName    String?
+  // Optional and unique. Used as an alternative login identifier to phone —
+  // people forget which number they signed up with far more often than they
+  // forget their email.
+  email       String?   @unique
+  // Bcrypt hash. NULLABLE on purpose: accounts created through the OTP flow
+  // have no password, and that flow still works. When SMS is provisioned,
+  // password login and OTP login can run side by side rather than one
+  // replacing the other.
+  passwordHash String?
+  // Collected at driver signup; a person's address, so it lives on the user
+  // rather than the driver profile.
+  address     String?
   role        Role      @default(RIDER)
   kycStatus   KycStatus @default(PENDING)
   rating      Float     @default(5.0)
@@ -232,6 +247,10 @@ model DriverProfile {
   // before kycStatus flips to APPROVED — the app only collects them.
   cnicFrontUrl        String?
   cnicBackUrl         String?
+  // Driving licence, both sides. licenseDocUrl above predates this and is
+  // kept for rows already using it; new signups fill these two.
+  licenseFrontUrl     String?
+  licenseBackUrl      String?
   vehicleDocUrl       String?  // registration book / ownership papers
   vehiclePhotoUrl     String?
   // Which part of the city they'll work. Free text for now (single-city MVP);

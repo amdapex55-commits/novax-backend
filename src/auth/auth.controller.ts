@@ -5,6 +5,7 @@ import { AuthService } from "./auth.service";
 import { RequestOtpDto } from "./dto/request-otp.dto";
 import { VerifyOtpDto } from "./dto/verify-otp.dto";
 import { RefreshDto } from "./dto/refresh.dto";
+import { RegisterDto, LoginDto } from "./dto/register.dto";
 
 @ApiTags("auth")
 @Controller("api/v1/auth")
@@ -25,6 +26,24 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 300000 } })
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto.phone, dto.code);
+  }
+
+  // Signup. Rate-limited but far looser than OTP — this costs us nothing to
+  // serve, unlike an SMS, and a legitimate person fat-fingering a form
+  // shouldn't be locked out for five minutes.
+  @Post("register")
+  @ApiOperation({ summary: "Create an account with a password. Customers are active immediately; drivers await approval." })
+  @Throttle({ default: { limit: 10, ttl: 300000 } })
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @Post("login")
+  @ApiOperation({ summary: "Sign in with email or phone plus password" })
+  // Tighter than register: this one is worth brute-forcing.
+  @Throttle({ default: { limit: 10, ttl: 300000 } })
+  login(@Body() dto: LoginDto) {
+    return this.authService.login(dto.identifier, dto.password);
   }
 
   @Post("refresh")

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, UnauthorizedException, ConflictException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcrypt";
@@ -7,12 +7,56 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SmsService } from "./sms.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { RegisterDto } from "./dto/register.dto";
 
 const OTP_TTL_MINUTES = 5;
 const OTP_LENGTH = 6;
 
+/**
+ * SESSION LENGTH — deliberately long.
+ *
+ * A 15-minute access token is the right default for a bank. It is the wrong
+ * default here: a driver mid-shift on patchy Karachi signal, or a customer
+ * standing at a kerb, being bounced to a login screen is a lost ride and a
+ * support call. Nobody re-authenticates gracefully one-handed on a bike.
+ *
+ * The tradeoff is real and worth stating: a stolen token is usable for
+ * longer. What bounds it is that ops can suspend an account at any time —
+ * `isActive` is re-checked on every socket connect and on every match, so a
+ * suspension takes effect immediately regardless of how long the token lives.
+ * Revocation doesn't wait for expiry.
+ *
+ * Shorten both if that calculus changes; they're env-overridable.
+ */
+const ACCESS_TTL_DEFAULT = "30d";
+const REFRESH_TTL_DEFAULT = "365d";
+
+const BCRYPT_ROUNDS = 10;
+
+/**
+ * A real bcrypt hash of a value nobody can log in with. Compared against when
+ * an account doesn't exist, so a wrong password and an unknown account cost
+ * the same amount of time.
+ */
+const DUMMY_HASH = "$2b$10$CwTycUXWue0Thq9StjUM0uJ8i5jJ3Kk2rJ0kQ0zP3wOaZ6JmQ3vTS";
+
+/**
+ * Pakistani mobile numbers get typed as 0300…, 92300…, +92300… and 300….
+ * Storing them unnormalised means the same person can register three times
+ * and then fail to log in with the form they didn't use.
+ */
+function normalisePhone(input: string): string {
+  const digits = (input || "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("92")) return `+${digits}`;
+  if (digits.startsWith("0")) return `+92${digits.slice(1)}`;
+  if (digits.length === 10) return `+92${digits}`;
+  return input.trim();
+}
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private sms: SmsService,
@@ -94,6 +138,119 @@ export class AuthService {
     return this.issueTokens(user.id, user.role);
   }
 
+  /**
+   * Password signup.
+   *
+   * A CUSTOMER is usable immediately — kycStatus APPROVED at creation. There
+   * is nothing to verify about someone who wants to book a ride, and making
+   * them wait for a human is how you lose them on day one.
+   *
+   * A DRIVER is created PENDING and stays unable to go online until ops
+   * approves them in the dashboard. That gate is not a formality: a driver
+   * carries a passenger, and their licence is checked by a person against the
+   * original document (see LAUNCH.md, day 3). The uploads collected here are
+   * what that person looks at.
+   */
+  async register(dto: RegisterDto) {
+    const phone = normalisePhone(dto.phone);
+    const email = dto.email.trim().toLowerCase();
+    const role = dto.role === "DRIVER" ? "DRIVER" : "RIDER";
+
+    // Checked explicitly rather than relying on the unique constraint, so the
+    // person gets "that number is already registered" instead of a 500 from a
+    // raw Prisma error.
+    const existing = await this.prisma.user.findFirst({
+      where: { OR: [{ phone }, { email }] },
+      select: { id: true, phone: true, email: true, passwordHash: true },
+    });
+    if (existing) {
+      // An account created by the OTP flow has no password. Rather than
+      // refusing, let them set one — otherwise anyone who used OTP before
+      // this shipped is permanently locked out of the new login.
+      if (!existing.passwordHash) {
+        const upgraded = await this.prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            passwordHash: await bcrypt.hash(dto.password, BCRYPT_ROUNDS),
+            name: dto.firstName.trim(),
+            lastName: dto.lastName.trim(),
+            email,
+            address: dto.address?.trim() || undefined,
+          },
+        });
+        return this.issueTokens(upgraded.id, upgraded.role);
+      }
+      throw new ConflictException(
+        existing.phone === phone
+          ? "That phone number is already registered. Sign in instead."
+          : "That email is already registered. Sign in instead.",
+      );
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        phone,
+        email,
+        name: dto.firstName.trim(),
+        lastName: dto.lastName.trim(),
+        address: dto.address?.trim() || undefined,
+        passwordHash: await bcrypt.hash(dto.password, BCRYPT_ROUNDS),
+        role: role as any,
+        // The whole point of the split: customers in, drivers queued.
+        kycStatus: role === "DRIVER" ? "PENDING" : "APPROVED",
+        ...(role === "DRIVER"
+          ? {
+              driverProfile: {
+                create: {
+                  vehicleType: "bike",
+                  licenseFrontUrl: dto.licenseFrontUrl,
+                  licenseBackUrl: dto.licenseBackUrl,
+                },
+              },
+            }
+          : {}),
+      },
+    });
+
+    this.logger.log(`Registered ${role} ${user.id} (${role === "DRIVER" ? "pending approval" : "active immediately"})`);
+    return this.issueTokens(user.id, user.role);
+  }
+
+  /**
+   * Password login by email OR phone.
+   *
+   * Both failure paths return the same message on purpose. Saying "no account
+   * with that email" tells an attacker which addresses are registered, which
+   * is a free user-enumeration oracle on a service where the identifier is
+   * also a phone number.
+   */
+  async login(identifier: string, password: string) {
+    const raw = identifier.trim();
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: raw.toLowerCase() }, { phone: normalisePhone(raw) }, { phone: raw }],
+      },
+    });
+
+    const GENERIC = "Wrong email/phone or password";
+
+    if (!user?.passwordHash) {
+      // Compare against a dummy hash anyway so a missing account and a wrong
+      // password take the same time. Without this, response timing alone
+      // reveals which identifiers exist.
+      await bcrypt.compare(password, DUMMY_HASH);
+      throw new UnauthorizedException(GENERIC);
+    }
+    if (!user.isActive) {
+      throw new UnauthorizedException("This account has been suspended. Contact support.");
+    }
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+      throw new UnauthorizedException(GENERIC);
+    }
+
+    return this.issueTokens(user.id, user.role);
+  }
+
   async refresh(refreshToken: string) {
     let payload: { sub: string };
     try {
@@ -144,14 +301,14 @@ export class AuthService {
       { sub: userId, role },
       {
         secret: this.config.get<string>("JWT_ACCESS_SECRET"),
-        expiresIn: this.config.get<string>("JWT_ACCESS_TTL", "15m"),
+        expiresIn: this.config.get<string>("JWT_ACCESS_TTL", ACCESS_TTL_DEFAULT),
       },
     );
     const refreshToken = this.jwt.sign(
       { sub: userId },
       {
         secret: this.config.get<string>("JWT_REFRESH_SECRET"),
-        expiresIn: this.config.get<string>("JWT_REFRESH_TTL", "30d"),
+        expiresIn: this.config.get<string>("JWT_REFRESH_TTL", REFRESH_TTL_DEFAULT),
       },
     );
 
