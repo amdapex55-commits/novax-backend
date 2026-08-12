@@ -38,10 +38,35 @@ export function assertProductionConfig(): void {
     problems.push("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values");
   }
 
+  // OTP LOGIN IS OPT-IN.
+  //
+  // Password signup/login is the live path (see auth.service.ts). SMS is
+  // parked because provisioning a local aggregator mask takes weeks, and
+  // nothing should be blocked on it in the meantime.
+  //
+  // When OTP is off we do NOT demand an SMS provider — but the OTP endpoints
+  // are also refused at the controller, so there's no half-alive path that
+  // quietly writes login codes into the server log. Off means off.
+  //
+  // Set ENABLE_OTP_LOGIN=true when a real sender is provisioned; the checks
+  // below then apply exactly as before.
+  const otpEnabled = ["1", "true", "yes"].includes(
+    (process.env.ENABLE_OTP_LOGIN ?? "false").trim().toLowerCase(),
+  );
   const smsProvider = process.env.SMS_PROVIDER ?? "console";
-  if (smsProvider === "console") {
+
+  if (!otpEnabled) {
+    // Nothing to validate. Guard against the dangerous middle state instead:
+    // a provider configured while the feature is off is a sign someone meant
+    // to enable it and didn't.
+    if (smsProvider === "twilio") {
+      problems.push(
+        "SMS_PROVIDER is twilio but ENABLE_OTP_LOGIN is not set — OTP login is refused, so nobody can use it. Set ENABLE_OTP_LOGIN=true or clear SMS_PROVIDER.",
+      );
+    }
+  } else if (smsProvider === "console") {
     problems.push(
-      'SMS_PROVIDER is "console" — OTP codes would be written to server logs instead of texted. Set SMS_PROVIDER=twilio.',
+      'ENABLE_OTP_LOGIN is on but SMS_PROVIDER is "console" — OTP codes would be written to server logs instead of texted. Set SMS_PROVIDER=twilio.',
     );
   } else if (smsProvider === "twilio") {
     // Catch a half-configured Twilio at BOOT rather than at the moment a
@@ -52,7 +77,7 @@ export function assertProductionConfig(): void {
     if (missing.length) {
       problems.push(`SMS_PROVIDER is "twilio" but ${missing.join(", ")} not set — OTP delivery would fail.`);
     }
-  } else {
+  } else if (otpEnabled) {
     problems.push(`SMS_PROVIDER "${smsProvider}" is not implemented. Use "twilio".`);
   }
 

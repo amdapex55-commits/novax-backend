@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Post, ForbiddenException } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
@@ -12,12 +12,32 @@ import { RegisterDto, LoginDto } from "./dto/register.dto";
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  /**
+   * OTP login is off unless ENABLE_OTP_LOGIN is set.
+   *
+   * Refused at the door rather than left running against a console "provider",
+   * which would write real login codes into the server log — anyone with log
+   * access could then sign in as anyone. A parked feature has to be actually
+   * parked, not merely unadvertised.
+   */
+  private assertOtpEnabled() {
+    const on = ["1", "true", "yes"].includes(
+      (process.env.ENABLE_OTP_LOGIN ?? "false").trim().toLowerCase(),
+    );
+    if (!on) {
+      throw new ForbiddenException(
+        "Code-by-SMS sign-in isn't available yet. Please use your email or phone and password.",
+      );
+    }
+  }
+
   @Post("otp/request")
   @ApiOperation({ summary: "Request a 6-digit login code by SMS" })
   // Tight limit: 3 requests / 5 min per IP — OTP endpoints are the classic
   // target for SMS-bombing abuse that racks up a real SMS-provider bill.
   @Throttle({ default: { limit: 3, ttl: 300000 } })
   requestOtp(@Body() dto: RequestOtpDto) {
+    this.assertOtpEnabled();
     return this.authService.requestOtp(dto.phone, dto.referralCode, dto.role);
   }
 
@@ -25,6 +45,7 @@ export class AuthController {
   @ApiOperation({ summary: "Verify the code, receive access + refresh tokens" })
   @Throttle({ default: { limit: 5, ttl: 300000 } })
   verifyOtp(@Body() dto: VerifyOtpDto) {
+    this.assertOtpEnabled();
     return this.authService.verifyOtp(dto.phone, dto.code);
   }
 
