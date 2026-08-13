@@ -363,7 +363,7 @@ export class TripsService {
     // "who is picking you up" trust card (name, rating, plate), which is the
     // single biggest trust signal in a ride app. Only fields safe for the
     // counterparty to see; no CNIC, no payout details.
-    const [driver, driverProfile, rider] = await Promise.all([
+    const [driver, driverProfile, rider, driverTripCount] = await Promise.all([
       trip.driverId
         ? this.prisma.user.findUnique({ where: { id: trip.driverId }, select: { name: true, rating: true, phone: true } })
         : null,
@@ -371,8 +371,20 @@ export class TripsService {
         ? this.prisma.driverProfile.findUnique({ where: { userId: trip.driverId }, select: { vehicleType: true, vehiclePlate: true } })
         : null,
       this.prisma.user.findUnique({ where: { id: trip.riderId }, select: { name: true, rating: true, phone: true } }),
+      /* HOW MANY TRIPS THIS RIDER HAS ACTUALLY FINISHED.
+         A star rating out of five is a weak signal early on — a rider with
+         one 5-star trip outranks one with two hundred 4.8s, and a customer
+         deciding whether to get on the back of a stranger's bike in Karachi
+         can tell the difference. Experience is the number that answers the
+         question they are really asking.
+         Counted rather than denormalised onto DriverProfile: at pilot volume
+         this is an indexed count on a column the matcher already filters by,
+         and a stored counter is one more thing that can drift from reality. */
+      trip.driverId
+        ? this.prisma.trip.count({ where: { driverId: trip.driverId, status: "COMPLETED" } })
+        : Promise.resolve(0),
     ]);
-    return { ...trip, driver, driverProfile, rider };
+    return { ...trip, driver, driverProfile, driverTripCount, rider };
   }
 
   /** Mint (or reuse) the share token for "send my live ride to someone".

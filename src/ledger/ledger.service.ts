@@ -317,7 +317,21 @@ export class LedgerService {
       "ERRAND_PAYOUT",
     ] as any;
 
-    const [today, week, todayCount, weekCount, balance] = await Promise.all([
+    /* THE LAST 14 DAYS, ROW BY ROW.
+       The screen needs two things this aggregate cannot give it: a bar per
+       day for the current week, and last week's total to compare against.
+       Both are answerable from the same set of rows, so they are fetched
+       once rather than as eight more aggregate queries.
+
+       Reading rows instead of grouping in SQL is deliberate at this size: a
+       busy driver does perhaps 25 jobs a day, so a fortnight is a few hundred
+       small rows on an indexed range — cheaper than the round trips, and it
+       keeps the day bucketing in one place. If a driver ever does thousands
+       of jobs a week this should become a GROUP BY date_trunc. */
+    const startOfLastWeek = new Date(startOfWeek);
+    startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+
+    const [today, week, todayCount, weekCount, balance, recentRows] = await Promise.all([
       this.prisma.ledgerEntry.aggregate({
         where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfDay } },
         _sum: { netAmount: true },
@@ -333,7 +347,27 @@ export class LedgerService {
         where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfWeek } },
       }),
       this.getBalance(userId),
+      this.prisma.ledgerEntry.findMany({
+        where: { userId, type: { in: PAYOUT_TYPES }, createdAt: { gte: startOfLastWeek } },
+        select: { netAmount: true, createdAt: true },
+      }),
     ]);
+
+    // One bucket per day of the current week, Sunday first, so the client can
+    // render seven bars without knowing anything about dates.
+    const daily = Array.from({ length: 7 }, (_, i) => {
+      const day = new Date(startOfWeek);
+      day.setDate(day.getDate() + i);
+      return { date: day.toISOString().slice(0, 10), amount: 0, jobs: 0 };
+    });
+
+    let lastWeekTotal = 0;
+    for (const row of recentRows) {
+      const amount = Number(row.netAmount);
+      if (row.createdAt < startOfWeek) { lastWeekTotal += amount; continue; }
+      const idx = Math.floor((row.createdAt.getTime() - startOfWeek.getTime()) / 86_400_000);
+      if (idx >= 0 && idx < 7) { daily[idx].amount += amount; daily[idx].jobs += 1; }
+    }
 
     return {
       today: today._sum.netAmount ? Number(today._sum.netAmount) : 0,
@@ -341,6 +375,11 @@ export class LedgerService {
       jobsToday: todayCount,
       jobsThisWeek: weekCount,
       balance: balance.balance,
+      daily,
+      lastWeek: lastWeekTotal,
+      // Which bucket is today, so the client can highlight it without
+      // re-deriving the week boundary in a different timezone to the server.
+      todayIndex: Math.floor((startOfDay.getTime() - startOfWeek.getTime()) / 86_400_000),
     };
   }
 }
