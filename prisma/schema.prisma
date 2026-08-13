@@ -343,6 +343,12 @@ model Trip {
   pickupLng   Float
   dropoffLat  Float
   dropoffLng  Float
+  // The addresses as the customer saw them. Only coordinates were stored,
+  // which means a completed trip could never answer "where did I go?" — the
+  // exact question behind "what was that Rs 340 on Tuesday". Delivery and
+  // Errand have carried labels since day one; Trip did not.
+  pickupLabel  String?
+  dropoffLabel String?
 
   distanceKm  Float?
   // Was this fare based on a real road route, or a straight-line estimate

@@ -71,6 +71,21 @@ export class CreateTripDto {
   @IsPositive()
   roadDurationMinutes?: number;
 
+  /* The addresses as shown to the customer. Optional so an older client can
+     still book — a trip with no labels is worse than one that fails only in
+     the sense that its receipt is thinner. */
+  @ApiPropertyOptional({ example: "Dolmen Mall, Clifton" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  pickupLabel?: string;
+
+  @ApiPropertyOptional({ example: "Lucky One Mall" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dropoffLabel?: string;
+
   @ApiPropertyOptional({ example: "Neeli building, gate ke saamne" })
   @IsOptional()
   @IsString()

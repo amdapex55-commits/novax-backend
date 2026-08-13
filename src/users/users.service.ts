@@ -156,10 +156,29 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const email = dto.email?.trim().toLowerCase();
+
+    // email is unique. Spreading the DTO straight into `data` would surface a
+    // raw Prisma P2002 as a 500 — the customer sees "something went wrong"
+    // for a mistake they could fix in two seconds if we told them what it was.
+    if (email) {
+      const clash = await this.prisma.user.findFirst({
+        where: { email, NOT: { id: userId } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new BadRequestException("That email is already used by another account.");
+      }
+    }
+
     return this.prisma.user.update({
       where: { id: userId },
-      data: dto,
-      select: { id: true, phone: true, name: true, role: true },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.lastName !== undefined ? { lastName: dto.lastName.trim() } : {}),
+        ...(email !== undefined ? { email } : {}),
+      },
+      select: { id: true, phone: true, name: true, lastName: true, email: true, role: true },
     });
   }
 

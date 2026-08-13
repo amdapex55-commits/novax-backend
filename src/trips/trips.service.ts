@@ -107,6 +107,8 @@ export class TripsService {
         pickupLng: dto.pickupLng,
         dropoffLat: dto.dropoffLat,
         dropoffLng: dto.dropoffLng,
+        pickupLabel: dto.pickupLabel?.trim() || null,
+        dropoffLabel: dto.dropoffLabel?.trim() || null,
         distanceKm,
         distanceSource,
         pickupAccuracyMeters: dto.pickupAccuracyMeters,
