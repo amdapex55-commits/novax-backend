@@ -46,6 +46,7 @@ const prisma = new PrismaClient();
 
 const args = process.argv.slice(2);
 const revoke = args.includes("--revoke");
+const allowWeak = args.includes("--allow-weak-password");
 const positional = args.filter((a) => !a.startsWith("--"));
 const identifier = positional[0];
 const newPhone = positional[1];
@@ -104,6 +105,37 @@ async function main() {
     return;
   }
 
+  /* ---------------------------------------------------- weak password ---
+
+     The 12-character floor below only applies when this script CREATES the
+     account. Promoting one that signed up through the app skips it entirely,
+     which makes promotion the path of least resistance and the one most
+     likely to be used — so the check has to live here too.
+
+     The stored value is a bcrypt hash and cannot be read back, so this
+     compares against the handful of passwords that actually appear at the top
+     of every credential-stuffing list. It is not a strength meter; it is a
+     check for "this is one of the first things anyone would try", against an
+     account that approves drivers carrying passengers, suspends users and
+     settles money, on a console reachable from the public internet.
+
+     A warning with an explicit override rather than a refusal: it is the
+     operator's system and their call. But it should not be possible to do it
+     without having been told.                                              */
+  async function usesCommonPassword(user) {
+    if (!user.passwordHash) return false;
+    const COMMON = [
+      "11223344", "12345678", "123456789", "1234567890", "12345678910",
+      "password", "password1", "password123", "qwerty123", "abc12345",
+      "11111111", "00000000", "87654321", "iloveyou", "admin123",
+      "adminadmin", "welcome1", "letmein1", "pakistan", "novago123",
+    ];
+    for (const guess of COMMON) {
+      if (await bcrypt.compare(guess, user.passwordHash)) return guess;
+    }
+    return false;
+  }
+
   /* --------------------------------------------------------- promote --- */
   if (existing) {
     if (existing.role === "ADMIN") {
@@ -119,10 +151,25 @@ async function main() {
         "  approve itself and take jobs. Use a separate account for ops.",
       );
     }
+    const weak = await usesCommonPassword(existing);
+    if (weak && !allowWeak) {
+      bail(
+        `Refusing: this account's password is "${weak}", which is on every\n` +
+        "  credential-stuffing list. ops.html is reachable from the public\n" +
+        "  internet, and this role approves drivers, suspends users and settles\n" +
+        "  money.\n\n" +
+        "  Change the password first (sign in and use Profile), then re-run.\n" +
+        "  To proceed anyway, knowing the risk:\n" +
+        `    node scripts/make-admin.js ${identifier} --allow-weak-password`,
+      );
+    }
     const updated = await prisma.user.update({
       where: { id: existing.id },
       data: { role: "ADMIN", kycStatus: "APPROVED", isActive: true },
     });
+    if (weak) {
+      console.log(`\n  WARNING: promoted with a known-weak password ("${weak}"). Change it soon.`);
+    }
     console.log(`
   Promoted to ADMIN
 
