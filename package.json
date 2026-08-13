@@ -15,8 +15,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prestart": "node -e \"require('fs').existsSync('dist/main.js')||(console.error('\\n[NovaGo] dist/main.js is missing — the TypeScript build did not run.\\n  Cause: NODE_ENV=production makes npm skip devDependencies, which is where the Nest CLI and tsc live.\\n  Fix: install with --include=dev (see nixpacks.toml), or set NPM_CONFIG_PRODUCTION=false.\\n'),process.exit(1))\"",
-    "seed:demo": "node scripts/seed-demo-accounts.js"
+    "prestart": "node -e \"require('fs').existsSync('dist/main.js')||(console.error('\\n[NovaGo] dist/main.js is missing \u2014 the TypeScript build did not run.\\n  Cause: NODE_ENV=production makes npm skip devDependencies, which is where the Nest CLI and tsc live.\\n  Fix: install with --include=dev (see nixpacks.toml), or set NPM_CONFIG_PRODUCTION=false.\\n'),process.exit(1))\"",
+    "seed:demo": "node scripts/seed-demo-accounts.js",
+    "make:admin": "node scripts/make-admin.js"
   },
   "jest": {
     "moduleFileExtensions": [

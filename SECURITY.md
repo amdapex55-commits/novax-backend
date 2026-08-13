@@ -57,3 +57,41 @@ that are in place and tested:
 
 **Review by:** end of pilot week 1. If the pilot extends past that without this
 being done, it stops being an accepted risk and becomes an ignored one.
+
+## Creating the first ADMIN
+
+There was no way to do this. The role is defined in the schema, enforced by
+`RolesGuard` on every `/admin` route and checked by the frontend router before
+it renders the ops console — but nothing ever set it on a row, and every path
+that could is itself guarded by an existing admin.
+
+That blocked the whole platform, not just the ops desk: driver approval is
+ADMIN-only and a driver cannot go online until `kycStatus` is `APPROVED`, so
+with no admin in existence no driver could ever take a job.
+
+`scripts/make-admin.js` fills the gap. Run it where `DATABASE_URL` already
+points at production, so the credential never has to be copied anywhere:
+
+```bash
+# Promote an account that already signed up in the app (preferred)
+railway run node scripts/make-admin.js ops@yourdomain.com
+
+# Or create one outright
+ADMIN_PASSWORD='<20+ chars>' railway run node scripts/make-admin.js ops@yourdomain.com +923001234567
+
+# Revoke later
+railway run node scripts/make-admin.js --revoke ops@yourdomain.com
+```
+
+Deliberately a script and not an endpoint: a "promote me" route is privilege
+escalation however it is guarded, and a `FIRST_ADMIN_EMAIL` env var re-grants
+the role on every boot, so anyone who ever reads that variable keeps a way in.
+This runs once, by a human with database access, and leaves nothing behind.
+
+Guards it enforces:
+- refuses to promote a DRIVER (one account able to approve itself *and* take
+  jobs)
+- refuses to revoke the last remaining admin (that is the lockout this script
+  exists to fix)
+- requires a 12+ character password when creating, because this account
+  settles money and suspends users
