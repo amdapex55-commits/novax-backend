@@ -66,6 +66,65 @@ export class AdminService {
       .sort((a, b) => a.balance - b.balance);
   }
 
+  /**
+   * Growth surface: business leads, referrals and loyalty in one place.
+   *
+   * All three were being captured and none were readable. A B2B lead form
+   * that files into a table nobody opens is worse than no form — someone
+   * asked to be contacted and won't be.
+   */
+  async getGrowth() {
+    const [leads, topReferrers, loyaltyAgg, referredCount] = await Promise.all([
+      this.prisma.businessLead.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      // Who is actually bringing people in — the only referral number that
+      // changes what you'd do (thank them, or ask them what's working).
+      this.prisma.user.findMany({
+        where: { referrals: { some: {} } },
+        select: {
+          id: true,
+          name: true,
+          lastName: true,
+          phone: true,
+          referralCode: true,
+          loyaltyPoints: true,
+          _count: { select: { referrals: true } },
+        },
+        orderBy: { referrals: { _count: "desc" } },
+        take: 20,
+      }),
+      this.prisma.user.aggregate({ _sum: { loyaltyPoints: true } }),
+      this.prisma.user.count({ where: { referredById: { not: null } } }),
+    ]);
+
+    return {
+      businessLeads: leads,
+      newLeadsCount: leads.filter((l) => l.status === "NEW" || !l.status).length,
+      topReferrers: topReferrers.map((u) => ({
+        id: u.id,
+        name: [u.name, u.lastName].filter(Boolean).join(" ") || u.phone,
+        phone: u.phone,
+        referralCode: u.referralCode,
+        loyaltyPoints: u.loyaltyPoints,
+        referredCount: u._count.referrals,
+      })),
+      totalLoyaltyPointsIssued: loyaltyAgg._sum.loyaltyPoints ?? 0,
+      signupsFromReferral: referredCount,
+    };
+  }
+
+  /** Mark a B2B lead as contacted or closed. */
+  async setLeadStatus(leadId: string, status: "NEW" | "CONTACTED" | "CLOSED") {
+    const lead = await this.prisma.businessLead.findUnique({ where: { id: leadId } });
+    if (!lead) throw new NotFoundException("Lead not found");
+    return this.prisma.businessLead.update({
+      where: { id: leadId },
+      data: { status, handledAt: status === "NEW" ? null : new Date() },
+    });
+  }
+
   async getStats() {
     const [activeTrips, activeDeliveries, onlineDrivers, pendingKyc, totalUsers, totalDrivers] = await Promise.all([
       this.prisma.trip.count({ where: { status: { in: ACTIVE_TRIP_STATUSES } } }),

@@ -240,6 +240,9 @@ model DeletionRequest {
   @@map("deletion_requests")
 }
 
+// A B2B enquiry. `status` exists so ops can tell an untouched lead from one
+// they've already called — without it the list is just an ever-growing pile
+// and the same company gets contacted twice or never.
 model BusinessLead {
   id          String   @id @default(uuid())
   companyName String
@@ -247,6 +250,9 @@ model BusinessLead {
   phone       String
   email       String?
   notes       String?
+  status      String   @default("NEW") // NEW | CONTACTED | CLOSED
+  handledAt   DateTime?
+
   createdAt   DateTime @default(now())
 
   @@map("business_leads")

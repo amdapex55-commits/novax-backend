@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, UseGuards, Patch } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { ManualAssignDto } from "./dto/manual-assign.dto";
 import { SuspendUserDto } from "./dto/suspend-user.dto";
@@ -56,6 +56,18 @@ export class AdminController {
   }
 
   // --- Live supply ---
+
+  @Get("growth")
+  @ApiOperation({ summary: "Business leads, top referrers and loyalty totals" })
+  getGrowth() {
+    return this.adminService.getGrowth();
+  }
+
+  @Patch("leads/:id")
+  @ApiOperation({ summary: "Mark a business lead contacted or closed" })
+  setLeadStatus(@Param("id") id: string, @Body() body: { status: "NEW" | "CONTACTED" | "CLOSED" }) {
+    return this.adminService.setLeadStatus(id, body.status);
+  }
 
   @Get("drivers/balances")
   @ApiOperation({ summary: "Driver wallet balances — who owes, who's blocked, most indebted first" })
