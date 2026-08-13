@@ -310,7 +310,7 @@ export class TripsService {
     return this.ratingsService.rate({ raterId, rateeId: trip.driverId, score, comment, tripId });
   }
 
-  async cancelTrip(tripId: string, userId: string) {
+  async cancelTrip(tripId: string, userId: string, dto?: { reason?: string; note?: string }) {
     const trip = await this.getTripOr404(tripId);
     if (trip.riderId !== userId && trip.driverId !== userId) {
       throw new ForbiddenException("Not your trip");
@@ -318,9 +318,30 @@ export class TripsService {
     if (!["REQUESTED", "MATCHING", "MATCHED"].includes(trip.status)) {
       throw new BadRequestException(`Cannot cancel a trip that is ${trip.status}`);
     }
+
+    // Recorded, not just counted. A cancellation without a reason tells you
+    // the rate went up and nothing about what to do — and the two cases you
+    // most need to separate (a rider demanding more than the fixed fare
+    // versus a customer who mis-pinned their pickup) look identical without
+    // it. DRIVER_ASKED_MORE in particular has to be countable per driver,
+    // because a pattern of it ends the relationship.
+    const cancelledBy = trip.riderId === userId ? "RIDER" : "DRIVER";
+    if (dto?.reason === "DRIVER_ASKED_MORE") {
+      this.logger.warn(
+        `Trip ${tripId}: customer reports driver ${trip.driverId} asked for more than the quoted fare.` +
+          (dto.note ? ` Note: ${dto.note}` : ""),
+      );
+    }
+
     const updated = await this.prisma.trip.update({
       where: { id: tripId },
-      data: { status: "CANCELLED", cancelledAt: new Date() },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancelReason: dto?.reason ?? null,
+        cancelNote: dto?.note?.trim() || null,
+      },
     });
     await this.excludedDriversStore.clear("trip", tripId);
     const notify = trip.riderId === userId ? trip.driverId : trip.riderId;

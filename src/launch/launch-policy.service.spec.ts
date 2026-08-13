@@ -131,12 +131,25 @@ describe("LaunchPolicyService", () => {
   });
 
   describe("parked services", () => {
-    it("defaults to rides only", () => {
+    it("defaults to rides, parcels and errands on — food off", () => {
       const policy = withEnv({});
       expect(policy.isServiceEnabled("RIDES")).toBe(true);
+      expect(policy.isServiceEnabled("DELIVERY")).toBe(true);
+      expect(policy.isServiceEnabled("ERRANDS")).toBe(true);
+      // Food stays off until kitchens are actually onboarded. This assertion
+      // is the guard: turning it on should be a deliberate act that breaks a
+      // test, not something that drifts in with an unrelated change.
       expect(policy.isServiceEnabled("FOOD")).toBe(false);
+    });
+
+    it("can still be switched off from the environment", () => {
+      // The kill switch matters more now that these are live: if COD or
+      // errand cash-fronting causes a problem mid-pilot, it has to be a
+      // Railway variable and a restart, not a deploy.
+      const policy = withEnv({ ENABLE_DELIVERY: "false", ENABLE_ERRANDS: "false" });
       expect(policy.isServiceEnabled("DELIVERY")).toBe(false);
       expect(policy.isServiceEnabled("ERRANDS")).toBe(false);
+      expect(policy.isServiceEnabled("RIDES")).toBe(true);
     });
 
     it("throws a 403-shaped error naming the parked service", () => {

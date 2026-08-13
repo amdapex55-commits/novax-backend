@@ -40,9 +40,17 @@ export class LaunchPolicyService {
   /** Which services take real orders. Defaults mirror the pilot: rides only. */
   private readonly enabled: Record<ParkedService, boolean> = {
     RIDES: parseBool(process.env.ENABLE_RIDES, true),
+    // Parcels and errands are live. Defaulted here rather than set as Railway
+    // variables so the code is the source of truth — a fresh environment
+    // behaves the same without anyone remembering to set two env vars. Either
+    // can still be switched off from Railway in seconds if an operational
+    // problem shows up mid-pilot.
+    DELIVERY: parseBool(process.env.ENABLE_DELIVERY, true),
+    ERRANDS: parseBool(process.env.ENABLE_ERRANDS, true),
+
+    // Food stays off: it needs restaurants onboarded and kitchens actually
+    // accepting orders — a supply problem the other two don't have.
     FOOD: parseBool(process.env.ENABLE_FOOD, false),
-    DELIVERY: parseBool(process.env.ENABLE_DELIVERY, false),
-    ERRANDS: parseBool(process.env.ENABLE_ERRANDS, false),
   };
 
   private readonly allowedVehicleTypes = (process.env.LAUNCH_VEHICLE_TYPES ?? "BIKE")

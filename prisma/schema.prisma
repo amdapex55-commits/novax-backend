@@ -380,6 +380,13 @@ model Trip {
   startedAt   DateTime?
   completedAt DateTime?
   cancelledAt DateTime?
+  // WHO cancelled and WHY. Without these a cancellation is a status change
+  // and nothing more — you cannot tell a rider gaming the system from a
+  // customer who mis-pinned their pickup, which is the single most useful
+  // signal in the first weeks of a pilot (see LAUNCH.md, week-one watchlist).
+  cancelledBy     String?  // "RIDER" | "DRIVER"
+  cancelReason    String?  // one of the fixed codes in cancel-trip.dto.ts
+  cancelNote      String?  // optional free text
 
   // "Share my ride" — an unguessable token that lets someone WITHOUT an
   // account watch this trip's progress (the safety feature every ride app

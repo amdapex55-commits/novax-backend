@@ -7,6 +7,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { TripsService } from "./trips.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { RateDto } from "../ratings/dto/rate.dto";
+import { CancelTripDto } from "./dto/cancel-trip.dto";
 
 type ReqUser = { userId: string; role: string };
 
@@ -54,9 +55,17 @@ export class TripsController {
     return this.tripsService.completeTrip(id, user.userId);
   }
 
+  // The body is optional so an older client (or a cached bundle) can still
+  // cancel — a customer must never be trapped in a booking because their app
+  // predates a field. A cancellation with no reason is still better than one
+  // that fails.
   @Post(":id/cancel")
-  cancel(@CurrentUser() user: ReqUser, @Param("id") id: string) {
-    return this.tripsService.cancelTrip(id, user.userId);
+  cancel(
+    @CurrentUser() user: ReqUser,
+    @Param("id") id: string,
+    @Body() dto?: CancelTripDto,
+  ) {
+    return this.tripsService.cancelTrip(id, user.userId, dto);
   }
 
   @Post(":id/rate")
