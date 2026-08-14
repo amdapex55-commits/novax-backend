@@ -113,6 +113,13 @@ export class TripsService {
         ? dto.offeredFare
         : estimateFare(dto.vehicleType as any, distanceKm, dto.roadDurationMinutes);
 
+    // One indexed read to decide which fleet this trip belongs to. Done here
+    // rather than at match time so the answer is stamped on the row.
+    const rider = await this.prisma.user.findUnique({
+      where: { id: riderId },
+      select: { isTestAccount: true },
+    });
+
     const trip = await this.prisma.trip.create({
       data: {
         riderId,
@@ -144,6 +151,9 @@ export class TripsService {
         // a client-side estimate; if the two disagree the server's is what
         // they are held to, and acceptedFare records that rather than what
         // the phone happened to display.
+        // Stamped from the rider, not read live at match time — a trip's
+        // nature must not change under it if the flag is later cleared.
+        isTest: rider?.isTestAccount === true,
         quotedFare: fare,
         acceptedFare: fare,
         quotedAt: new Date(),
@@ -190,7 +200,9 @@ export class TripsService {
     const excluded = await this.excludedDriversStore.getAll("trip", tripId);
 
     for (const radius of SEARCH_RADII_KM) {
-      const nearby = await this.locationService.findNearbyDrivers(trip.pickupLat, trip.pickupLng, radius);
+      // trip.isTest decides which fleet is searched. See
+      // LocationService.filterEligible — segregation runs in both directions.
+      const nearby = await this.locationService.findNearbyDrivers(trip.pickupLat, trip.pickupLng, radius, trip.isTest);
       const eligible = nearby.filter((d) => !excluded.has(d.driverId));
       if (eligible.length === 0) continue;
 
@@ -529,9 +541,23 @@ export class TripsService {
     // confirmed trip.driverId === driverId above, so this can't be a trip
     // that somehow completed without a matched driver.
     if (trip.fare) {
-      await this.ledgerService.recordTripPayout(driverId, tripId, trip.fare, updated.tipAmount);
+      /* A REVIEWER'S RIDE MUST NOT MOVE MONEY.
+         Without this, every store-review trip credits a driver payout and
+         debits 15% commission against a test account — which lands in real
+         earnings totals, real settlement runs and the ops balance sheet. The
+         books would then disagree with reality by however many times Apple
+         and Google tested the app. */
+      if (updated.isTest) {
+        this.logger.log(`Trip ${tripId} is a test trip — skipping ledger, payout and commission.`);
+      } else {
+        await this.ledgerService.recordTripPayout(driverId, tripId, trip.fare, updated.tipAmount);
+      }
     }
-    await this.loyaltyService.awardTripCompletionPoints(trip.riderId);
+    // Same reasoning as the ledger above: loyalty totals are reported on the
+    // ops growth desk, and a reviewer's trips should not appear in them.
+    if (!updated.isTest) {
+      await this.loyaltyService.awardTripCompletionPoints(trip.riderId);
+    }
 
     return updated;
   }

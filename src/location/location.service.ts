@@ -91,7 +91,7 @@ export class LocationService {
   }
 
   /** Trips module calls this to find match candidates, closest first. */
-  async findNearbyDrivers(lat: number, lng: number, radiusKm: number): Promise<NearbyDriver[]> {
+  async findNearbyDrivers(lat: number, lng: number, radiusKm: number, wantTestFleet = false): Promise<NearbyDriver[]> {
     // GEOSEARCH ... WITHCOORD WITHDIST ASC — Redis does the distance sort for us,
     // no need to pull every driver into app code and sort in JS.
     const results = (await this.redis.client.call(
@@ -126,7 +126,7 @@ export class LocationService {
     // Redis is a location cache. The database is the authority on whether
     // someone is allowed to carry a person. Checking it costs one indexed
     // query per match attempt, which is nothing next to the alternative.
-    return this.filterEligible(candidates);
+    return this.filterEligible(candidates, wantTestFleet);
   }
 
   /**
@@ -134,7 +134,25 @@ export class LocationService {
    * Anyone rejected here is also evicted from the geo set, so a suspended
    * driver stops costing us a query on every subsequent search.
    */
-  private async filterEligible(candidates: NearbyDriver[]): Promise<NearbyDriver[]> {
+  /**
+   * @param wantTestFleet true when the job belongs to a review/test account.
+   *
+   * SEGREGATION IS THE WHOLE POINT, AND IT RUNS IN BOTH DIRECTIONS.
+   *
+   *   real job  -> real drivers only  (a reviewer's simulated rider must
+   *               never be dispatched to a paying customer)
+   *   test job  -> test drivers only  (a reviewer's ride must never be sent
+   *               to a real person on a real bike in Karachi)
+   *
+   * Enforced here rather than in trips/delivery/food/errands because every
+   * one of those matches through this function — for the same reason the
+   * credit-limit check lives here. A per-service check is four places to
+   * forget it, and forgetting this one dispatches a real rider to nobody.
+   */
+  private async filterEligible(
+    candidates: NearbyDriver[],
+    wantTestFleet = false,
+  ): Promise<NearbyDriver[]> {
     if (candidates.length === 0) return [];
 
     // Freshness first, deliberately: a dead phone is the cheapest thing to
@@ -152,6 +170,10 @@ export class LocationService {
         isActive: true,           // not suspended by ops
         kycStatus: "APPROVED",    // documents verified by a person
         driverProfile: { isOnline: true },
+        // The segregation gate. Never `{ in: [...] }` and never omitted —
+        // an exact match in both directions is what makes it a guarantee
+        // rather than a preference.
+        isTestAccount: wantTestFleet,
       },
       select: { id: true },
     });
@@ -270,8 +292,8 @@ export class LocationService {
    * driver only ever sits in one queue at a time (see DriverProfile.activeMode).
    * Widens the geo candidate set a bit before filtering since most nearby
    * drivers will typically be in RIDE mode and get filtered out. */
-  async findNearbyDriversForMode(lat: number, lng: number, radiusKm: number, mode: "RIDE" | "FOOD_ERRAND"): Promise<NearbyDriver[]> {
-    const candidates = await this.findNearbyDrivers(lat, lng, radiusKm);
+  async findNearbyDriversForMode(lat: number, lng: number, radiusKm: number, mode: "RIDE" | "FOOD_ERRAND", wantTestFleet = false): Promise<NearbyDriver[]> {
+    const candidates = await this.findNearbyDrivers(lat, lng, radiusKm, wantTestFleet);
     if (candidates.length === 0) return [];
     const profiles = await this.prisma.driverProfile.findMany({
       where: { userId: { in: candidates.map((c) => c.driverId) }, activeMode: mode, isOnline: true },

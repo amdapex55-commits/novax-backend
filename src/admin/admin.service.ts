@@ -380,6 +380,8 @@ export class AdminService {
           //   opsEscalatedAt set              -> past the hard threshold. The
           //     customer has already been told a person has it, so somebody
           //     needs to actually be that person.
+          // So a dispatcher never phones a rider about a reviewer's ride.
+          isTest: true,
           offerCount: true,
           noDriverFoundAt: true,
           opsAlertedAt: true,

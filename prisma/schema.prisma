@@ -46,6 +46,21 @@ model User {
   kycStatus   KycStatus @default(PENDING)
   rating      Float     @default(5.0)
   isActive    Boolean   @default(true)
+
+  // REVIEW / TEST ACCOUNT. Set only by scripts/seed-demo-accounts.js or an
+  // admin — there is no endpoint and no signup path that can set it, because
+  // an account that can flip this could opt itself out of real matching.
+  //
+  // It exists so App Store and Play reviewers, who test from outside Pakistan
+  // at hours when no real rider is online, can complete a whole trip instead
+  // of meeting "no riders available" and concluding the app is broken. That is
+  // a rejection, and it is one of the most common ones for this category.
+  //
+  // The flag SEGREGATES rather than privileges: a test customer is only ever
+  // matched to a test driver, and a test driver only ever receives test trips.
+  // See LocationService.filterEligible, which is the single place every
+  // service matches through.
+  isTestAccount Boolean @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -85,6 +100,7 @@ model User {
   chatMessages ChatMessage[]
   incidents    Incident[]
 
+  @@index([isTestAccount])
   @@map("users")
 }
 
@@ -488,6 +504,13 @@ model Trip {
   // is driven from.
   // How many drivers have been offered this job. Rising with no acceptance is
   // the signal that the problem is the job, not the driver.
+  // Stamped from the rider's isTestAccount at creation, not read live, so a
+  // trip's nature cannot change under it if the flag is later cleared. Test
+  // trips are excluded from settlement and from the ledger entirely — see
+  // completeTrip — because a reviewer's ride must never move real money or
+  // appear in a driver's earnings.
+  isTest         Boolean   @default(false)
+
   offerCount     Int       @default(0)
   // Matching exhausted every radius and found nobody at all.
   noDriverFoundAt DateTime?

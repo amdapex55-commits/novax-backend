@@ -43,6 +43,18 @@ async function upsertDemo({ phone, email, name, role, kycStatus, hash }) {
     passwordHash: hash,
     role,
     kycStatus,
+    /* SEGREGATION, not privilege.
+       These accounts exist so an App Store or Play reviewer — testing from
+       outside Pakistan, at an hour when no real rider is online — can complete
+       a whole trip instead of meeting "no riders available" and concluding the
+       app is broken. That specific outcome is a common rejection.
+       The flag guarantees two things, enforced in LocationService
+       .filterEligible: a reviewer's ride is never dispatched to a real person
+       on a real bike, and a paying customer is never matched to this fleet.
+       It also keeps these trips out of the ledger, settlement and loyalty
+       totals, so the books never disagree with reality by however many times
+       the app was reviewed. */
+    isTestAccount: true,
     isActive: true,
   };
 
