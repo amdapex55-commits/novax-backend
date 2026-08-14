@@ -62,12 +62,35 @@ export class LaunchPolicyService {
   // else. At 30-50 riders it mostly produces unmatched requests.
   private readonly allowBidFare = parseBool(process.env.LAUNCH_ALLOW_BID_FARE, false);
 
+  /* NOVA GO RUNS ACROSS ALL OF KARACHI, AND THESE DEFAULTS SAY SO.
+
+     These used to default to a 6km circle centred on Clifton, with the fence
+     switched OFF. Both halves were wrong, in opposite directions:
+
+       - off meant the API accepted a booking from Hyderabad or from a GPS
+         glitch in the Arabian Sea, and the customer waited for a rider who
+         could never come
+       - the 6km values meant that anyone who switched it on — following the
+         old runbook, which said exactly that — instantly cut off Malir,
+         Gulshan, Baldia and North Karachi, contradicting the landing page's
+         "if you're in Karachi, you can book"
+
+     Now it is on, and drawn wide enough to cover the city end to end. It is
+     a sanity boundary, not a service area: it rejects another city, and
+     nothing else. Supply is managed by where you recruit riders, not by
+     fencing customers out.
+
+     These mirror ZONE in the frontend's js/launch.config.js. If you change
+     one, change the other — the frontend copy is what makes the UI honest
+     before a request is sent; this is what makes it true. */
   private readonly zone = {
-    enabled: parseBool(process.env.LAUNCH_ZONE_ENABLED, false),
-    name: process.env.LAUNCH_ZONE_NAME ?? "the launch zone",
-    lat: parseNum(process.env.LAUNCH_ZONE_LAT, 24.8138),
-    lng: parseNum(process.env.LAUNCH_ZONE_LNG, 67.03),
-    radiusKm: parseNum(process.env.LAUNCH_ZONE_RADIUS_KM, 6),
+    enabled: parseBool(process.env.LAUNCH_ZONE_ENABLED, true),
+    name: process.env.LAUNCH_ZONE_NAME ?? "Karachi",
+    // Geographic centre of the city, not Clifton — a southern centre pushes
+    // the radius out to sea and cuts off the north.
+    lat: parseNum(process.env.LAUNCH_ZONE_LAT, 24.92),
+    lng: parseNum(process.env.LAUNCH_ZONE_LNG, 67.1),
+    radiusKm: parseNum(process.env.LAUNCH_ZONE_RADIUS_KM, 45),
   };
 
   private readonly hours = {

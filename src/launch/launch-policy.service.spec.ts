@@ -83,6 +83,55 @@ describe("LaunchPolicyService", () => {
       ).toThrow(/outside the service area/i);
     });
 
+    /* THE DEFAULTS ARE THE PRODUCT PROMISE, SO THEY GET THEIR OWN TESTS.
+
+       The landing page says "if you're in Karachi, you can book" and lists
+       Saddar, Malir, Gulshan and Baldia by name. The defaults used to be a
+       6km circle centred on Clifton, switched off — so anyone who followed
+       the old runbook and switched it on cut off most of the city the
+       marketing had already promised.
+
+       These assert the two things that must both stay true: the whole city
+       is inside, and another city is not. Widening or narrowing the default
+       should break a test, not drift in with an unrelated change. */
+    describe("the shipped default covers all of Karachi", () => {
+      const KARACHI_NEIGHBOURHOODS: Array<[string, number, number]> = [
+        ["Clifton / Sea View", 24.79, 67.03],
+        ["Saddar", 24.8607, 67.0011],
+        ["Gulshan-e-Iqbal", 24.92, 67.09],
+        ["Malir", 24.8935, 67.205],
+        ["Baldia", 24.92, 66.98],
+        ["North Karachi", 25.01, 67.06],
+      ];
+
+      it.each(KARACHI_NEIGHBOURHOODS)("accepts a pickup in %s", (_name, lat, lng) => {
+        const policy = withEnv(OPEN_ALL_HOURS);
+        expect(() =>
+          policy.assertRideAllowed({ vehicleType: "BIKE", pickupLat: lat, pickupLng: lng }),
+        ).not.toThrow();
+      });
+
+      it("still rejects another city", () => {
+        const policy = withEnv(OPEN_ALL_HOURS);
+        // Hyderabad, ~140km east — a real booking from there could never be
+        // served, and is far more likely to be a typo or a bad GPS fix.
+        expect(() =>
+          policy.assertRideAllowed({ vehicleType: "BIKE", pickupLat: 25.396, pickupLng: 68.3578 }),
+        ).toThrow(/outside the service area/i);
+        // Lahore.
+        expect(() =>
+          policy.assertRideAllowed({ vehicleType: "BIKE", pickupLat: 31.52, pickupLng: 74.35 }),
+        ).toThrow(/outside the service area/i);
+      });
+
+      it("is on by default — an unfenced API accepts bookings it cannot serve", () => {
+        const policy = withEnv(OPEN_ALL_HOURS);
+        expect(() =>
+          policy.assertRideAllowed({ vehicleType: "BIKE", pickupLat: 31.52, pickupLng: 74.35 }),
+        ).toThrow();
+      });
+    });
+
     it("accepts anywhere when the geofence is off", () => {
       const policy = withEnv({ ...OPEN_ALL_HOURS, LAUNCH_ZONE_ENABLED: "false" });
       // Lahore.
