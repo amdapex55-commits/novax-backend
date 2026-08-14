@@ -16,6 +16,21 @@
 // ride is the simplest honest thing, and simplicity is worth more than
 // squeezing margin out of a 40-trip-a-day pilot.
 
+/* WHICH PRICE LIST PRODUCED A FARE.
+ *
+ * Bump this whenever any number in FARE_CONFIG changes — a petrol re-price,
+ * a new minimum, a service added.
+ *
+ * Without it, re-pricing makes every historical fare unexplainable: a
+ * customer disputes a Rs 195 trip from last month, and Rs 22/km applied to
+ * 6.1km no longer reproduces it because the rate is Rs 25/km now. With it,
+ * the trip carries the name of the table it was priced under and the
+ * arithmetic can be replayed exactly.
+ *
+ * Date-stamped rather than a counter so the version answers "when" without a
+ * lookup table. */
+export const FARE_VERSION = "2026-08-bike-60-22-150";
+
 export const FARE_CONFIG = {
   // ---- LIVE ----
   BIKE: { base: 60, perKm: 22, perMin: 0, minimum: 150 },

@@ -368,9 +368,29 @@ export class AdminService {
         select: {
           id: true, status: true, vehicleType: true, requestedAt: true, fare: true,
           pickupLat: true, pickupLng: true, dropoffLat: true, dropoffLng: true,
+          // WHY THE JOB IS STUCK, not just that it is. A dispatcher opening
+          // this list has to decide who to phone first, and these are the
+          // three facts that decide it:
+          //   offerCount 0 + noDriverFoundAt  -> nobody is online near the
+          //     pickup. Phoning drivers will not help; this is a coverage
+          //     problem and the customer should probably be told.
+          //   offerCount high                 -> drivers are being offered and
+          //     declining. The job is the problem (bad pickup pin, long dead
+          //     leg), and reading it aloud to a driver usually places it.
+          //   opsEscalatedAt set              -> past the hard threshold. The
+          //     customer has already been told a person has it, so somebody
+          //     needs to actually be that person.
+          offerCount: true,
+          noDriverFoundAt: true,
+          opsAlertedAt: true,
+          opsEscalatedAt: true,
+          pickupLabel: true,
+          dropoffLabel: true,
           rider: { select: { id: true, name: true, phone: true } },
         },
-        orderBy: { requestedAt: "asc" },
+        // Escalated first — those are the ones where a promise has already
+        // been made to the customer. Oldest first within that.
+        orderBy: [{ opsEscalatedAt: { sort: "desc", nulls: "last" } }, { requestedAt: "asc" }],
         take: 50,
       }),
       this.prisma.delivery.findMany({

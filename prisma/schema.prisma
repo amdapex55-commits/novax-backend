@@ -304,6 +304,28 @@ model DriverProfile {
   // without a migration.
   activeMode    String   @default("RIDE") // "RIDE" | "FOOD_ERRAND"
 
+  // ------------------------------------------------- dispatch reputation ---
+  // Counters the matcher scores on. Denormalised deliberately: scoring runs
+  // inside the dispatch path for every candidate on every request, and
+  // deriving an acceptance rate from the Trip table there would mean a
+  // COUNT over that driver's whole history per candidate per job.
+  //
+  // These are incremented at the point the event happens, so they are
+  // eventually-consistent with Trip rather than derived from it. That is an
+  // acceptable trade for a ranking signal — a counter being one behind
+  // changes a score by a fraction of a percent. It would NOT be acceptable
+  // for anything that moves money, which is why nothing here does.
+  //
+  // lastCompletedAt drives the idle-time bonus: a driver who has been sitting
+  // for forty minutes should outrank an equally-close one who just dropped
+  // off, or the same few riders take every job and the rest log out.
+  offersSent      Int       @default(0)
+  offersAccepted  Int       @default(0)
+  offersDeclined  Int       @default(0)
+  tripsCancelled  Int       @default(0)
+  lastOfferAt     DateTime?
+  lastCompletedAt DateTime?
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -387,6 +409,60 @@ model Trip {
   // behaviour that makes riders stop trusting a tipping feature.
   tipAmount   Decimal?   @db.Decimal(10, 2)
 
+  // ---------------------------------------------------------- fare audit ---
+  // WHY FOUR FARE COLUMNS INSTEAD OF ONE
+  //
+  // `fare` above is the operative number — the ledger splits it, the receipt
+  // prints it. What it cannot do is answer the question every fare dispute
+  // actually turns on: "was I charged what I was shown?"
+  //
+  // Answering that needs the fare at each of the three moments it exists, and
+  // they are genuinely different moments:
+  //
+  // quotedFare    what the app displayed while they were deciding. Comes
+  // from the client's route; may be based on an ESTIMATED
+  // distance if routing was down (see distanceSource).
+  // acceptedFare  what they agreed to when they pressed Confirm. This is
+  // the promise. Nothing may change it afterwards.
+  // finalFare     what was actually charged at completion.
+  //
+  // The invariant is finalFare == acceptedFare, always, unless the customer
+  // changed the trip. Storing all three makes that checkable in one SQL query
+  // across every trip ever taken, rather than inferred from a log. A drift is
+  // then a bug we find, not a customer complaint we lose.
+  //
+  // Redundant with `fare` on purpose: `fare` means "the number", finalFare
+  // means "the number, stamped at completion, for comparison". Reading the
+  // invariant should not require knowing which column happens to be
+  // authoritative this month.
+  //
+  // fareVersion records WHICH price list produced it. Re-pricing after a
+  // petrol change otherwise makes every historical fare unexplainable —
+  // Rs 22/km today does not reconstruct a fare quoted at Rs 19/km.
+  quotedFare    Decimal?  @db.Decimal(10, 2)
+  acceptedFare  Decimal?  @db.Decimal(10, 2)
+  finalFare     Decimal?  @db.Decimal(10, 2)
+  fareVersion   String?
+  quotedAt      DateTime?
+  // Set when finalFare != acceptedFare. Never expected; alerts ops when it
+  // happens rather than surfacing at the kerb as an argument.
+  fareDriftedAt DateTime?
+
+  // ------------------------------------------------------ dispatch audit ---
+  // "A person is watching every ride" is the product promise, and it needs
+  // timestamps to be a promise rather than a slogan. These are what the ops
+  // desk sorts on and what the customer's "Ops is looking into this" message
+  // is driven from.
+  // How many drivers have been offered this job. Rising with no acceptance is
+  // the signal that the problem is the job, not the driver.
+  offerCount     Int       @default(0)
+  // Matching exhausted every radius and found nobody at all.
+  noDriverFoundAt DateTime?
+  // Crossed the soft threshold — ops should look.
+  opsAlertedAt   DateTime?
+  // Crossed the hard threshold — ops must place this by hand.
+  opsEscalatedAt DateTime?
+
   requestedAt DateTime   @default(now())
   matchedAt   DateTime?
   startedAt   DateTime?
@@ -420,6 +496,10 @@ model Trip {
   // single-column index on status alone doesn't serve well.
   @@index([status, vehicleType])
   @@index([driverId, status])
+  // Serve the ops desk's "nothing is moving" queries — both are polled
+  // continuously while the desk is open.
+  @@index([opsAlertedAt])
+  @@index([noDriverFoundAt])
   @@map("trips")
 }
 

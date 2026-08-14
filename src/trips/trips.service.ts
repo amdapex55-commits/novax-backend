@@ -8,7 +8,8 @@ import { LedgerService } from "../ledger/ledger.service";
 import { RatingsService } from "../ratings/ratings.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
-import { estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
+import { FARE_VERSION, estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
+import { scoreDriver, ratesFromCounters, idleMinutesSince } from "./dispatch.util";
 import { LaunchPolicyService } from "../launch/launch-policy.service";
 
 // Weekly driver bonus threshold — see getWeeklyIncentiveProgress(). A flat,
@@ -24,6 +25,18 @@ const INCENTIVE_WEEKLY_BONUS = 2000;
 // ranking, acceptance-rate weighting, surge) layers on top of this later.
 const SEARCH_RADII_KM = [1, 3, 5, 8];
 const OFFER_TIMEOUT_MS = 15_000;
+
+// How many of the nearest candidates get scored. Beyond this the extra
+// database work is spent reordering drivers who were never going to win on
+// distance anyway.
+const DISPATCH_SHORTLIST = 8;
+
+// The escalation ladder behind "a person is watching every ride".
+// 90 seconds is roughly six offer cycles — long enough that a normal busy
+// moment resolves itself, short enough that a customer has not yet decided
+// the app is broken.
+const OPS_ALERT_MS = 90_000;
+const OPS_ESCALATE_MS = 180_000;
 
 @Injectable()
 export class TripsService {
@@ -115,6 +128,24 @@ export class TripsService {
         pickupNote: dto.pickupNote,
         pickupNoteAudioUrl: dto.pickupNoteAudioUrl,
         fare,
+        // THE FARE AUDIT TRAIL. See the schema comment on these columns.
+        //
+        // quoted and accepted are written together here because in this app
+        // they are genuinely the same instant: the customer is looking at the
+        // number when they press Confirm, and this request IS that press.
+        // They stay separate columns because that stops being true the moment
+        // a quote can be held and booked later (a scheduled ride), and a
+        // schema that cannot express the difference is one that hides the
+        // drift it was added to catch.
+        //
+        // Note this is the SERVER's fare, not the client's. The customer saw
+        // a client-side estimate; if the two disagree the server's is what
+        // they are held to, and acceptedFare records that rather than what
+        // the phone happened to display.
+        quotedFare: fare,
+        acceptedFare: fare,
+        quotedAt: new Date(),
+        fareVersion: FARE_VERSION,
         offeredFare: dto.offeredFare,
         // Kept out of `fare` on purpose — the tip is settled to the driver in
         // full, with no commission taken (see completeTrip / commission.util).
@@ -127,6 +158,26 @@ export class TripsService {
     // blocking the HTTP response on a driver search.
     this.attemptMatch(trip.id).catch((err) => this.logger.error(`Matching failed for ${trip.id}`, err));
 
+    /* THE ESCALATION CLOCK RUNS WHETHER OR NOT MATCHING FAILS LOUDLY.
+       escalateIfStuck is also called from the decline path and the
+       nobody-found path, but neither is guaranteed to fire at the right
+       moment: a job cycling through 15-second offers reaches 90 seconds
+       mid-cycle, and one with no drivers at all reaches it with nothing
+       running. These two timers are what make the promise time-based.
+
+       In-process timers, so a restart loses them. That is survivable and
+       deliberately not over-engineered: the ops desk's stuck-jobs list is a
+       DATABASE query on requestedAt, so a dispatcher still sees the job.
+       What a restart loses is the customer-facing message, not the ops
+       safety net. If that becomes unacceptable, this belongs in a scheduled
+       sweep rather than a queue. */
+    setTimeout(() => {
+      this.escalateIfStuck(trip.id).catch(() => undefined);
+    }, OPS_ALERT_MS).unref?.();
+    setTimeout(() => {
+      this.escalateIfStuck(trip.id).catch(() => undefined);
+    }, OPS_ESCALATE_MS).unref?.();
+
     return trip;
   }
 
@@ -138,23 +189,144 @@ export class TripsService {
 
     for (const radius of SEARCH_RADII_KM) {
       const nearby = await this.locationService.findNearbyDrivers(trip.pickupLat, trip.pickupLng, radius);
-      const candidate = nearby.find((d) => !excluded.has(d.driverId));
-      if (candidate) {
-        await this.offerToDriver(tripId, candidate.driverId);
+      const eligible = nearby.filter((d) => !excluded.has(d.driverId));
+      if (eligible.length === 0) continue;
+
+      // RANK, DON'T TAKE THE FIRST.
+      //
+      // findNearbyDrivers returns nearest-first, and taking [0] means a rider
+      // who declines everything is offered everything — they stay nearest,
+      // declining costs them nothing, and every decline is another 15 seconds
+      // on a waiting customer. See dispatch.util.ts for the weights and why
+      // distance still dominates.
+      //
+      // Only the shortlist is scored: pulling reputation counters for every
+      // driver in an 8km radius would be a query per candidate on the
+      // critical path of a booking, to reorder people who were never going to
+      // be picked.
+      const best = await this.rankCandidates(eligible.slice(0, DISPATCH_SHORTLIST));
+      if (best) {
+        await this.offerToDriver(tripId, best);
         return;
       }
     }
 
-    // Nobody found at any radius — leave status as REQUESTED so a retry
-    // (new driver coming online, rider expanding search) can pick it up.
+    // NOBODY, AT ANY RADIUS. This used to log a warning and stop — the trip
+    // sat in REQUESTED, nothing retried it, and the customer watched a
+    // spinner until they gave up. Nothing was ever going to change that
+    // state except another booking attempt.
+    //
+    // Now it is recorded and escalated, so the ops desk sees it and the
+    // customer is told the truth. See escalateIfStuck().
+    await this.prisma.trip.update({
+      where: { id: tripId },
+      data: { noDriverFoundAt: trip.noDriverFoundAt ?? new Date() },
+    }).catch(() => undefined);
     this.logger.warn(`No available drivers found for trip ${tripId}`);
+    await this.escalateIfStuck(tripId);
+  }
+
+  /**
+   * Score a shortlist and return the best driverId, or null.
+   *
+   * Reputation lives on DriverProfile as counters (see the schema comment) so
+   * this is one query for the whole shortlist rather than one per driver.
+   */
+  private async rankCandidates(
+    candidates: Array<{ driverId: string; distanceKm: number }>,
+  ): Promise<string | null> {
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0].driverId;
+
+    const ids = candidates.map((c) => c.driverId);
+    const [profiles, users] = await Promise.all([
+      this.prisma.driverProfile.findMany({
+        where: { userId: { in: ids } },
+        select: {
+          userId: true, offersSent: true, offersAccepted: true,
+          offersDeclined: true, tripsCancelled: true, lastCompletedAt: true,
+        },
+      }),
+      this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, rating: true } }),
+    ]);
+    const byProfile = new Map(profiles.map((p) => [p.userId, p]));
+    const byRating = new Map(users.map((u) => [u.id, u.rating]));
+
+    let bestId: string | null = null;
+    let bestScore = -Infinity;
+    for (const c of candidates) {
+      const p = byProfile.get(c.driverId);
+      const rates = p
+        ? ratesFromCounters(p)
+        : { acceptanceRate: null, cancellationRate: null };
+      const score = scoreDriver({
+        distanceKm: c.distanceKm,
+        acceptanceRate: rates.acceptanceRate,
+        cancellationRate: rates.cancellationRate,
+        rating: byRating.get(c.driverId) ?? null,
+        idleMinutes: idleMinutesSince(p?.lastCompletedAt),
+      });
+      if (score > bestScore) { bestScore = score; bestId = c.driverId; }
+    }
+    return bestId;
+  }
+
+  /**
+   * "A person is watching every ride" is the product promise. This is the
+   * part that makes it measurable.
+   *
+   *   90s  — ops is told. Automatic matching is still trying.
+   *   3min — ops must place it by hand, and the customer is told a person
+   *          has picked it up.
+   *
+   * Both thresholds are stamped on the trip rather than computed from
+   * requestedAt at read time, so the ops queue can index them and so "when
+   * did we notice" survives into the dispute record.
+   */
+  private async escalateIfStuck(tripId: string) {
+    const trip = await this.prisma.trip.findUnique({ where: { id: tripId } });
+    if (!trip) return;
+    // Only jobs still looking for someone can be stuck.
+    if (!["REQUESTED", "MATCHING"].includes(trip.status)) return;
+
+    const waitingMs = Date.now() - new Date(trip.requestedAt).getTime();
+
+    if (waitingMs >= OPS_ESCALATE_MS && !trip.opsEscalatedAt) {
+      await this.prisma.trip.update({
+        where: { id: tripId },
+        data: { opsEscalatedAt: new Date(), opsAlertedAt: trip.opsAlertedAt ?? new Date() },
+      });
+      // The customer stops seeing a bare spinner and starts seeing a person.
+      this.locationGateway.emitToUser(trip.riderId, "trip:opsEscalated", {
+        tripId,
+        message: "Nova Go Ops is placing this ride by hand.",
+      });
+      this.logger.error(`Trip ${tripId} escalated to manual dispatch after ${Math.round(waitingMs / 1000)}s`);
+      return;
+    }
+
+    if (waitingMs >= OPS_ALERT_MS && !trip.opsAlertedAt) {
+      await this.prisma.trip.update({ where: { id: tripId }, data: { opsAlertedAt: new Date() } });
+      this.locationGateway.emitToUser(trip.riderId, "trip:opsWatching", {
+        tripId,
+        message: "Nova Go Ops is watching this ride.",
+      });
+      this.logger.warn(`Trip ${tripId} unmatched after ${Math.round(waitingMs / 1000)}s — ops alerted`);
+    }
   }
 
   private async offerToDriver(tripId: string, driverId: string) {
     const trip = await this.prisma.trip.update({
       where: { id: tripId },
-      data: { status: "MATCHING", driverId },
+      data: { status: "MATCHING", driverId, offerCount: { increment: 1 } },
     });
+
+    // Reputation counters (see the DriverProfile schema comment). Fire and
+    // forget: a counter that fails to increment skews a ranking signal by a
+    // fraction of a percent, and is never worth failing a dispatch over.
+    this.prisma.driverProfile
+      .update({ where: { userId: driverId }, data: { offersSent: { increment: 1 }, lastOfferAt: new Date() } })
+      .catch(() => undefined);
 
     // Include fare/fareType so the driver can actually see a rider's
     // proposed price before accepting a BID trip — same info an inDrive
@@ -185,7 +357,15 @@ export class TripsService {
 
   private async handleDeclineOrTimeout(tripId: string, driverId: string) {
     await this.excludedDriversStore.add("trip", tripId, driverId);
+    this.prisma.driverProfile
+      .update({ where: { userId: driverId }, data: { offersDeclined: { increment: 1 } } })
+      .catch(() => undefined);
     await this.prisma.trip.update({ where: { id: tripId }, data: { status: "REQUESTED", driverId: null } });
+    // Check the clock on every cycle, not only when the radius search comes
+    // back empty. A job being declined round after round is the case a
+    // customer feels most — the spinner never stops and nothing is wrong
+    // enough to trip the no-drivers path.
+    await this.escalateIfStuck(tripId);
     await this.attemptMatch(tripId);
   }
 
@@ -216,6 +396,9 @@ export class TripsService {
     await this.excludedDriversStore.clear("trip", tripId);
     this.locationGateway.server.to(`trip:${tripId}`).emit("trip:matched", { tripId, driverId });
     this.locationGateway.emitToUser(trip.riderId, "trip:matched", { tripId, driverId });
+    this.prisma.driverProfile
+      .update({ where: { userId: driverId }, data: { offersAccepted: { increment: 1 } } })
+      .catch(() => undefined);
     return updated;
   }
 
@@ -264,6 +447,44 @@ export class TripsService {
       // Someone else already completed it — return current state, don't pay again.
       return this.getTripOr404(tripId);
     }
+    // STAMP THE FINAL FARE AND CHECK IT AGAINST WHAT WAS PROMISED.
+    //
+    // The fare is fixed at booking and nothing in this codebase is supposed to
+    // change it afterwards. That is exactly why it is worth checking: an
+    // invariant nobody verifies is an invariant that quietly stops holding.
+    //
+    // A drift here means a customer is about to be asked for a different
+    // number than the one they agreed to, at the kerb, in cash, with no way
+    // to appeal. So it is recorded on the trip and logged at error level for
+    // the ops desk — and the fare is NOT silently corrected, because the
+    // honest answer to "these disagree" is to charge what was promised.
+    const promised = trip.acceptedFare != null ? Number(trip.acceptedFare) : null;
+    const charged = trip.fare != null ? Number(trip.fare) : null;
+    const drifted = promised != null && charged != null && Math.abs(promised - charged) >= 0.01;
+
+    await this.prisma.trip.update({
+      where: { id: tripId },
+      data: {
+        // Honour the promise: what we charge is what was accepted, whenever
+        // we have an accepted figure to honour.
+        finalFare: promised ?? charged,
+        ...(drifted ? { fareDriftedAt: new Date() } : {}),
+      },
+    });
+
+    // Idle time is measured from here, so it must be stamped even when the
+    // driver goes straight into another job.
+    this.prisma.driverProfile
+      .update({ where: { userId: driverId }, data: { lastCompletedAt: new Date() } })
+      .catch(() => undefined);
+
+    if (drifted) {
+      this.logger.error(
+        `FARE DRIFT on trip ${tripId}: accepted Rs ${promised}, computed Rs ${charged}. ` +
+        `Charging the accepted fare. This should never happen — investigate.`,
+      );
+    }
+
     const updated = await this.getTripOr404(tripId);
     // trip.fare is a Prisma Decimal now (see schema.prisma) — Number() it
     // before it goes anywhere that isn't straight back into another Decimal
@@ -333,6 +554,18 @@ export class TripsService {
         `Trip ${tripId}: customer reports driver ${trip.driverId} asked for more than the quoted fare.` +
           (dto.note ? ` Note: ${dto.note}` : ""),
       );
+    }
+
+    // A driver who accepts and then cancels costs the customer far more than
+    // one who declines up front: they have already stopped looking. Counted
+    // separately from declines so the score can weight it separately — see
+    // `reliability` in dispatch.util.ts. Only counted when the driver had
+    // actually taken the job (MATCHED); cancelling an offer they never
+    // accepted is a decline, and is already counted as one.
+    if (cancelledBy === "DRIVER" && trip.driverId && trip.status === "MATCHED") {
+      this.prisma.driverProfile
+        .update({ where: { userId: trip.driverId }, data: { tripsCancelled: { increment: 1 } } })
+        .catch(() => undefined);
     }
 
     const updated = await this.prisma.trip.update({
