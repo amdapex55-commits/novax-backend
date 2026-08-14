@@ -18,6 +18,7 @@ import { UploadsModule } from "./uploads/uploads.module";
 import { LedgerModule } from "./ledger/ledger.module";
 import { RatingsModule } from "./ratings/ratings.module";
 import { LoyaltyModule } from "./loyalty/loyalty.module";
+import { PushModule } from "./push/push.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { AdminModule } from "./admin/admin.module";
 import { SupportModule } from "./support/support.module";
@@ -65,6 +66,7 @@ import { SafetyModule } from "./safety/safety.module";
     LedgerModule,
     RatingsModule,
     LoyaltyModule,
+    PushModule,
     NotificationsModule,
     AdminModule,
     SupportModule,

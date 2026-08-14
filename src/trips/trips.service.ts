@@ -10,6 +10,7 @@ import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { FARE_VERSION, estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
 import { scoreDriver, ratesFromCounters, idleMinutesSince } from "./dispatch.util";
+import { NotificationsService } from "../notifications/notifications.service";
 import { LaunchPolicyService } from "../launch/launch-policy.service";
 
 // Weekly driver bonus threshold — see getWeeklyIncentiveProgress(). A flat,
@@ -51,6 +52,7 @@ export class TripsService {
     private ratingsService: RatingsService,
     private loyaltyService: LoyaltyService,
     private launchPolicy: LaunchPolicyService,
+    private notifications: NotificationsService,
   ) {}
 
   async createTrip(riderId: string, dto: CreateTripDto) {
@@ -345,6 +347,20 @@ export class TripsService {
       distanceKm: trip.distanceKm,
     });
 
+    /* THE OFFER IS THE MOST TIME-CRITICAL NOTIFICATION IN THE PRODUCT.
+       It expires in 15 seconds, and until now it existed only as a socket
+       event — delivered to an app the driver is very often not looking at,
+       because they are riding. The offer cascaded away before they saw it,
+       which reads to the driver as "this app never gives me jobs".
+       Not awaited: a slow push must not eat the offer window. */
+    void this.notifications.notify(
+      driverId,
+      "driver",
+      "New ride request",
+      trip.fare ? `Rs ${Math.round(Number(trip.fare))} · ${trip.distanceKm?.toFixed(1) ?? "?"} km` : "Tap to view",
+      { type: "trip_offer", tripId },
+    );
+
     // Auto-cascade: if the driver hasn't accepted within the window, treat it
     // like a decline and offer the next-nearest candidate.
     setTimeout(async () => {
@@ -396,6 +412,11 @@ export class TripsService {
     await this.excludedDriversStore.clear("trip", tripId);
     this.locationGateway.server.to(`trip:${tripId}`).emit("trip:matched", { tripId, driverId });
     this.locationGateway.emitToUser(trip.riderId, "trip:matched", { tripId, driverId });
+    void this.notifications.notify(
+      trip.riderId, "customer", "Rider found",
+      "Your rider is on the way to the pickup.",
+      { type: "trip_matched", tripId },
+    );
     this.prisma.driverProfile
       .update({ where: { userId: driverId }, data: { offersAccepted: { increment: 1 } } })
       .catch(() => undefined);
@@ -415,6 +436,13 @@ export class TripsService {
     const trip = await this.getTripOr404(tripId);
     this.assertDriverOwnsTrip(trip, driverId, ["MATCHED"]);
     this.locationGateway.emitToUser(trip.riderId, "trip:driverArrived", { tripId });
+    // The one a customer is most likely to miss — the phone is in a pocket
+    // and the rider is at the kerb.
+    void this.notifications.notify(
+      trip.riderId, "customer", "Your rider has arrived",
+      "They're waiting at your pickup point.",
+      { type: "trip_arrived", tripId },
+    );
     return { message: "Rider notified" };
   }
 
@@ -484,6 +512,12 @@ export class TripsService {
         `Charging the accepted fare. This should never happen — investigate.`,
       );
     }
+
+    void this.notifications.notify(
+      trip.riderId, "customer", "Trip complete",
+      promised != null ? `Please pay Rs ${Math.round(promised)} in cash.` : "Thanks for riding with Nova Go.",
+      { type: "trip_completed", tripId },
+    );
 
     const updated = await this.getTripOr404(tripId);
     // trip.fare is a Prisma Decimal now (see schema.prisma) — Number() it

@@ -63,6 +63,7 @@ model User {
 
   otpCodes      OtpCode[]
   refreshTokens RefreshToken[]
+  deviceTokens  DeviceToken[]
   driverProfile DriverProfile?
   tripsAsRider  Trip[]         @relation("RiderTrips")
   tripsAsDriver Trip[]         @relation("DriverTrips")
@@ -184,6 +185,38 @@ model ChatMessage {
 // One row per push-style in-app notification (KYC approved, referral bonus
 // credited, etc.). Polled by the app on screen-open — no realtime channel
 // needed for this, unlike trip/delivery status which already has sockets.
+// One row per (device, user). A push goes to a DEVICE, not to a person — and
+// the difference matters here because both apps can be installed on one
+// phone, and a driver's phone is frequently shared or handed over.
+//
+// WHY THE TOKEN IS THE PRIMARY IDENTITY
+//
+// FCM tokens move between users: a driver signs out on a shared phone, another
+// signs in, and the same token now belongs to someone else. Keying on the
+// token (unique) and overwriting userId on register is what stops a job offer
+// for driver A landing on the phone of driver B. Keying on userId instead
+// would leave the old row alive and the notification would go to both.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // "android" | "ios" | "web"
+  platform  String
+  // Which of the four apps this install is, so a customer notification is
+  // never delivered to a driver build sitting on the same phone.
+  app       String
+  // Bumped every time the app registers, which is every cold start. A token
+  // that has not been seen in months is a dead install and can be pruned.
+  lastSeenAt DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  // Sending to a user means "every device that user has registered", which is
+  // this index. app is in it because every send is scoped to one app.
+  @@index([userId, app])
+  @@map("device_tokens")
+}
+
 model Notification {
   id        String   @id @default(uuid())
   userId    String
