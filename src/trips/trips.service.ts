@@ -10,6 +10,7 @@ import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { FARE_VERSION, estimateFare, haversineKm, roadEstimateFromStraightLine } from "./fare.util";
 import { scoreDriver, ratesFromCounters, idleMinutesSince } from "./dispatch.util";
+import { assessCancellation } from "./cancellation.util";
 import { NotificationsService } from "../notifications/notifications.service";
 import { LaunchPolicyService } from "../launch/launch-policy.service";
 
@@ -168,6 +169,11 @@ export class TripsService {
     // Fire-and-forget: matching happens async so the rider's booking request
     // returns immediately with a trip id to poll/subscribe on, rather than
     // blocking the HTTP response on a driver search.
+    this.recordEvent(trip.id, "REQUESTED", { actorId: riderId, actorRole: "RIDER" });
+    this.recordEvent(trip.id, "QUOTED", {
+      meta: { fare, fareVersion: FARE_VERSION, distanceKm, distanceSource },
+    });
+
     this.attemptMatch(trip.id).catch((err) => this.logger.error(`Matching failed for ${trip.id}`, err));
 
     /* THE ESCALATION CLOCK RUNS WHETHER OR NOT MATCHING FAILS LOUDLY.
@@ -191,6 +197,45 @@ export class TripsService {
     }, OPS_ESCALATE_MS).unref?.();
 
     return trip;
+  }
+
+  /**
+   * Append one line to a trip's history.
+   *
+   * Fire-and-forget and never throws: an audit trail that can fail a booking
+   * is worse than one with a gap in it. Callers do not await this, and must
+   * not — recording that something happened must never be able to stop it
+   * happening.
+   */
+  private recordEvent(
+    tripId: string,
+    type: string,
+    opts: { actorId?: string | null; actorRole?: string | null; meta?: Record<string, unknown> } = {},
+  ) {
+    void this.prisma.tripEvent
+      .create({
+        data: {
+          tripId,
+          type,
+          actorId: opts.actorId ?? null,
+          actorRole: opts.actorRole ?? null,
+          meta: (opts.meta ?? undefined) as any,
+        },
+      })
+      .catch((err) => this.logger.warn(`Could not record ${type} for trip ${tripId}: ${err.message}`));
+  }
+
+  /** The whole story of one trip, oldest first. Used by ops when a customer
+   *  disputes what happened, and by the customer's own receipt. */
+  async getTripEvents(tripId: string, requesterId: string, requesterRole?: string) {
+    const trip = await this.getTripOr404(tripId);
+    if (requesterRole !== "ADMIN" && trip.riderId !== requesterId && trip.driverId !== requesterId) {
+      throw new ForbiddenException("Not your trip");
+    }
+    return this.prisma.tripEvent.findMany({
+      where: { tripId },
+      orderBy: { createdAt: "asc" },
+    });
   }
 
   private async attemptMatch(tripId: string) {
@@ -236,6 +281,7 @@ export class TripsService {
       where: { id: tripId },
       data: { noDriverFoundAt: trip.noDriverFoundAt ?? new Date() },
     }).catch(() => undefined);
+    if (!trip.noDriverFoundAt) this.recordEvent(tripId, "NO_DRIVER");
     this.logger.warn(`No available drivers found for trip ${tripId}`);
     await this.escalateIfStuck(tripId);
   }
@@ -315,6 +361,7 @@ export class TripsService {
         tripId,
         message: "Nova Go Ops is placing this ride by hand.",
       });
+      this.recordEvent(tripId, "OPS_ESCALATED", { meta: { waitingMs } });
       this.logger.error(`Trip ${tripId} escalated to manual dispatch after ${Math.round(waitingMs / 1000)}s`);
       return;
     }
@@ -325,6 +372,7 @@ export class TripsService {
         tripId,
         message: "Nova Go Ops is watching this ride.",
       });
+      this.recordEvent(tripId, "OPS_ALERTED", { meta: { waitingMs } });
       this.logger.warn(`Trip ${tripId} unmatched after ${Math.round(waitingMs / 1000)}s — ops alerted`);
     }
   }
@@ -365,6 +413,8 @@ export class TripsService {
        because they are riding. The offer cascaded away before they saw it,
        which reads to the driver as "this app never gives me jobs".
        Not awaited: a slow push must not eat the offer window. */
+    this.recordEvent(tripId, "OFFERED", { actorId: driverId, actorRole: "DRIVER" });
+
     void this.notifications.notify(
       driverId,
       "driver",
@@ -384,6 +434,7 @@ export class TripsService {
   }
 
   private async handleDeclineOrTimeout(tripId: string, driverId: string) {
+    this.recordEvent(tripId, "DECLINED", { actorId: driverId, actorRole: "DRIVER" });
     await this.excludedDriversStore.add("trip", tripId, driverId);
     this.prisma.driverProfile
       .update({ where: { userId: driverId }, data: { offersDeclined: { increment: 1 } } })
@@ -423,6 +474,7 @@ export class TripsService {
     const updated = trip;
     await this.excludedDriversStore.clear("trip", tripId);
     this.locationGateway.server.to(`trip:${tripId}`).emit("trip:matched", { tripId, driverId });
+    this.recordEvent(tripId, "ACCEPTED", { actorId: driverId, actorRole: "DRIVER" });
     this.locationGateway.emitToUser(trip.riderId, "trip:matched", { tripId, driverId });
     void this.notifications.notify(
       trip.riderId, "customer", "Rider found",
@@ -447,6 +499,7 @@ export class TripsService {
   async markArrived(tripId: string, driverId: string) {
     const trip = await this.getTripOr404(tripId);
     this.assertDriverOwnsTrip(trip, driverId, ["MATCHED"]);
+    this.recordEvent(tripId, "ARRIVED", { actorId: driverId, actorRole: "DRIVER" });
     this.locationGateway.emitToUser(trip.riderId, "trip:driverArrived", { tripId });
     // The one a customer is most likely to miss — the phone is in a pocket
     // and the rider is at the kerb.
@@ -465,6 +518,7 @@ export class TripsService {
       where: { id: tripId },
       data: { status: "IN_PROGRESS", startedAt: new Date() },
     });
+    this.recordEvent(tripId, "STARTED", { actorId: driverId, actorRole: "DRIVER" });
     this.locationGateway.emitToUser(trip.riderId, "trip:started", { tripId });
     return updated;
   }
@@ -517,6 +571,12 @@ export class TripsService {
     this.prisma.driverProfile
       .update({ where: { userId: driverId }, data: { lastCompletedAt: new Date() } })
       .catch(() => undefined);
+
+    this.recordEvent(tripId, "COMPLETED", {
+      actorId: driverId, actorRole: "DRIVER",
+      meta: { finalFare: promised ?? charged, tipAmount: trip.tipAmount ? Number(trip.tipAmount) : 0, isTest: trip.isTest },
+    });
+    if (drifted) this.recordEvent(tripId, "FARE_DRIFT", { meta: { accepted: promised, computed: charged } });
 
     if (drifted) {
       this.logger.error(
@@ -622,11 +682,26 @@ export class TripsService {
     // `reliability` in dispatch.util.ts. Only counted when the driver had
     // actually taken the job (MATCHED); cancelling an offer they never
     // accepted is a decline, and is already counted as one.
-    if (cancelledBy === "DRIVER" && trip.driverId && trip.status === "MATCHED") {
+    // What this cancellation costs and who it counts against — one place,
+    // testable without a database. See cancellation.util.ts.
+    const outcome = assessCancellation({
+      cancelledBy: cancelledBy as "RIDER" | "DRIVER",
+      status: trip.status,
+      matchedAt: trip.matchedAt,
+      isTest: trip.isTest,
+    });
+
+    if (outcome.countsAgainstDriver && trip.driverId) {
       this.prisma.driverProfile
         .update({ where: { userId: trip.driverId }, data: { tripsCancelled: { increment: 1 } } })
         .catch(() => undefined);
     }
+
+    this.recordEvent(tripId, "CANCELLED", {
+      actorId: userId,
+      actorRole: cancelledBy,
+      meta: { reason: dto?.reason ?? null, fee: outcome.fee, statusWhenCancelled: trip.status },
+    });
 
     const updated = await this.prisma.trip.update({
       where: { id: tripId },
@@ -634,6 +709,7 @@ export class TripsService {
         status: "CANCELLED",
         cancelledAt: new Date(),
         cancelledBy,
+        cancellationFee: outcome.fee,
         cancelReason: dto?.reason ?? null,
         cancelNote: dto?.note?.trim() || null,
       },

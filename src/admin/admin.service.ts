@@ -520,4 +520,94 @@ export class AdminService {
     this.logger.warn(`Ops manually assigned ${jobType} ${jobId} to driver ${driverId}`);
     return { ok: true, jobType, jobId, driverId };
   }
+
+  /**
+   * Marketplace liquidity — the numbers that say whether the market is
+   * WORKING, as opposed to whether the software is running.
+   *
+   * The existing dashboard answers "what happened today": trips, revenue,
+   * signups. Those are outcomes. None of them tell you the thing that
+   * actually decides whether Nova Go survives its pilot, which is whether a
+   * customer who opens the app can get a rider.
+   *
+   * The decisive number is NO-MATCH RATE BY AREA. Nova Go books across all of
+   * Karachi deliberately (see the zone note in launch.config.js), and the
+   * trade that makes acceptable is recruiting riders in tight clusters. This
+   * is how you know which cluster is next: an area with demand and no supply
+   * shows up here as failed requests, and that is a recruitment target rather
+   * than a reason to shrink the service area.
+   *
+   * Windowed to the last hour by default because liquidity is a right-now
+   * property. A day-long average hides the evening peak completely.
+   */
+  async getMarketplaceMetrics(minutes = 60) {
+    const since = new Date(Date.now() - minutes * 60_000);
+
+    const [requested, matched, completed, cancelled, noDriver, escalated, onlineDrivers, recent] =
+      await Promise.all([
+        this.prisma.trip.count({ where: { requestedAt: { gte: since } } }),
+        this.prisma.trip.count({ where: { requestedAt: { gte: since }, matchedAt: { not: null } } }),
+        this.prisma.trip.count({ where: { requestedAt: { gte: since }, status: "COMPLETED" } }),
+        this.prisma.trip.count({ where: { requestedAt: { gte: since }, status: "CANCELLED" } }),
+        this.prisma.trip.count({ where: { requestedAt: { gte: since }, noDriverFoundAt: { not: null } } }),
+        this.prisma.trip.count({ where: { requestedAt: { gte: since }, opsEscalatedAt: { not: null } } }),
+        this.prisma.driverProfile.count({ where: { isOnline: true, user: { isActive: true, kycStatus: "APPROVED", isTestAccount: false } } }),
+        // Pickup coordinates + timings for the per-area breakdown below.
+        this.prisma.trip.findMany({
+          where: { requestedAt: { gte: since }, isTest: false },
+          select: { pickupLat: true, pickupLng: true, pickupLabel: true, matchedAt: true, requestedAt: true, noDriverFoundAt: true },
+          take: 500,
+        }),
+      ]);
+
+    // Median, not mean: one 40-minute outlier drags a mean somewhere no
+    // customer actually experienced, and this number exists to describe what
+    // a typical person waits.
+    const waits = recent
+      .filter((t) => t.matchedAt)
+      .map((t) => (new Date(t.matchedAt!).getTime() - new Date(t.requestedAt).getTime()) / 1000)
+      .sort((a, b) => a - b);
+    const medianMatchSeconds = waits.length ? Math.round(waits[Math.floor(waits.length / 2)]) : null;
+
+    /* AREA BUCKETS.
+       Rounding coordinates to 2dp is roughly a 1.1km square — about the size
+       of a Karachi neighbourhood, and small enough that "supply is thin here"
+       points at somewhere you could actually go and recruit. Labelled from
+       the pickup text when we have it, because a dispatcher thinks in
+       "Gulshan", not in "24.92, 67.09". */
+    const areas = new Map<string, { key: string; label: string | null; requests: number; unmatched: number }>();
+    for (const t of recent) {
+      const key = `${t.pickupLat.toFixed(2)},${t.pickupLng.toFixed(2)}`;
+      const entry = areas.get(key) ?? { key, label: t.pickupLabel ?? null, requests: 0, unmatched: 0 };
+      entry.requests += 1;
+      if (!t.matchedAt) entry.unmatched += 1;
+      if (!entry.label && t.pickupLabel) entry.label = t.pickupLabel;
+      areas.set(key, entry);
+    }
+
+    const worstAreas = [...areas.values()]
+      .filter((a) => a.unmatched > 0)
+      .sort((a, b) => b.unmatched - a.unmatched || b.requests - a.requests)
+      .slice(0, 8)
+      .map((a) => ({ ...a, noMatchRate: Math.round((a.unmatched / a.requests) * 100) }));
+
+    return {
+      windowMinutes: minutes,
+      onlineDrivers,
+      requested,
+      matched,
+      completed,
+      cancelled,
+      noDriver,
+      escalated,
+      requestsPerMinute: Math.round((requested / minutes) * 100) / 100,
+      // The headline. Everything else explains it.
+      matchRate: requested ? Math.round((matched / requested) * 100) : null,
+      noMatchRate: requested ? Math.round(((requested - matched) / requested) * 100) : null,
+      cancellationRate: requested ? Math.round((cancelled / requested) * 100) : null,
+      medianMatchSeconds,
+      // Where to recruit next.
+      worstAreas,
+    };
+  }
 }

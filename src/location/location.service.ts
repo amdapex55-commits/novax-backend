@@ -7,6 +7,9 @@ export interface NearbyDriver {
   distanceKm: number;
 }
 
+// A heartbeat every 20s means three missed beats before we stop believing
+// the app is alive — tolerant of one bad tunnel, not of a killed process.
+const HEARTBEAT_STALE_MS = 60_000;
 const GEO_KEY = "drivers:geo"; // single-city MVP; shard per-city (drivers:geo:<city>) once you have more than one
 
 /**
@@ -79,6 +82,101 @@ export class LocationService {
       "EX",
       LASTSEEN_TTL_SECONDS,
     );
+  }
+
+  /**
+   * The driver app says "I am still here" every 20 seconds while online.
+   *
+   * WHY A CLAIM THAT EXPIRES BEATS A BOOLEAN
+   *
+   * driverProfile.isOnline is set by the app when the driver taps Go Online.
+   * Nothing ever unsets it if the app dies — and on the Xiaomi, Oppo and Vivo
+   * hardware most of this market carries, the battery manager killing a
+   * backgrounded app is routine, not exceptional. The driver believes they
+   * are working. The matcher ranks them. Every offer burns its full
+   * fifteen-second window on a phone that is not listening, and the customer
+   * waits through it.
+   *
+   * A heartbeat inverts that: liveness is something the app must keep
+   * asserting, so stopping is indistinguishable from never having started and
+   * the server needs no cooperation from a dead process to notice.
+   *
+   * The device fields ride along because ops otherwise diagnoses "I'm not
+   * getting jobs" by asking a rider on the phone whether their GPS is on.
+   */
+  async recordHeartbeat(
+    driverId: string,
+    device: { appVersion?: string; batteryLevel?: number; networkType?: string } = {},
+  ) {
+    await this.prisma.driverProfile.updateMany({
+      where: { userId: driverId },
+      data: {
+        lastHeartbeatAt: new Date(),
+        ...(device.appVersion ? { appVersion: device.appVersion.slice(0, 32) } : {}),
+        ...(Number.isFinite(device.batteryLevel)
+          ? { batteryLevel: Math.max(0, Math.min(100, Math.round(device.batteryLevel!))) }
+          : {}),
+        ...(device.networkType ? { networkType: device.networkType.slice(0, 16) } : {}),
+      },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * The authoritative answer to "am I actually receiving jobs, and if not,
+   * why?" — computed from the same conditions matching uses, so the driver
+   * can never be told they are fine while the matcher is skipping them.
+   *
+   * Returning REASONS rather than a boolean is the point. "You are offline"
+   * sends a driver to the toggle they already switched on; "your GPS has not
+   * updated in four minutes" tells them what to actually fix.
+   */
+  async getDriverStatus(driverId: string) {
+    const [user, profile, lastFix] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: driverId },
+        select: { isActive: true, kycStatus: true },
+      }),
+      this.prisma.driverProfile.findUnique({
+        where: { userId: driverId },
+        select: {
+          isOnline: true, lastHeartbeatAt: true, activeMode: true,
+          appVersion: true, batteryLevel: true, networkType: true,
+        },
+      }),
+      this.getLastFixTimes([driverId]),
+    ]);
+
+    const now = Date.now();
+    const fixAt = lastFix.get(driverId) ?? null;
+    const heartbeatAt = profile?.lastHeartbeatAt ? new Date(profile.lastHeartbeatAt).getTime() : null;
+
+    const blockers: string[] = [];
+    if (!user?.isActive) blockers.push("Your account is suspended — contact the ops desk.");
+    if (user?.kycStatus !== "APPROVED") blockers.push("Your documents are still being reviewed.");
+    if (!profile?.isOnline) blockers.push("You are offline. Tap Go Online to start receiving jobs.");
+    if (!fixAt || now - fixAt > MAX_FIX_AGE_MS) {
+      blockers.push("Your location hasn't reached us recently — check GPS is on and keep the app open.");
+    }
+    if (!heartbeatAt || now - heartbeatAt > HEARTBEAT_STALE_MS) {
+      blockers.push("The app hasn't checked in recently. If your phone restricts background apps, allow Nova Go to run.");
+    }
+    const overLimit = await this.driversOverCreditLimit([driverId]);
+    if (overLimit.includes(driverId)) {
+      blockers.push("You've reached the commission limit. Settle to start receiving jobs again.");
+    }
+
+    return {
+      receivingJobs: blockers.length === 0,
+      blockers,
+      device: {
+        appVersion: profile?.appVersion ?? null,
+        batteryLevel: profile?.batteryLevel ?? null,
+        networkType: profile?.networkType ?? null,
+        lastFixSecondsAgo: fixAt ? Math.round((now - fixAt) / 1000) : null,
+        lastHeartbeatSecondsAgo: heartbeatAt ? Math.round((now - heartbeatAt) / 1000) : null,
+      },
+    };
   }
 
   async removeDriver(driverId: string) {

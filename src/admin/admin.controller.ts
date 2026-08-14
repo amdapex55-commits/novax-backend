@@ -36,6 +36,15 @@ export class AdminController {
 
   // --- Dispatch fallback: the "nothing is moving, do something" screen ---
 
+  @Get("marketplace")
+  @ApiOperation({ summary: "Liquidity right now — match rate, wait times, and where supply is thin" })
+  getMarketplace(@Query("minutes") minutes?: string) {
+    const parsed = Number(minutes);
+    return this.adminService.getMarketplaceMetrics(
+      Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 1440) : 60,
+    );
+  }
+
   @Get("stuck-jobs")
   @ApiOperation({ summary: "Jobs that automatic matching hasn't placed — ops must intervene" })
   getStuckJobs(@Query("minutes") minutes?: string) {

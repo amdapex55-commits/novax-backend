@@ -233,6 +233,40 @@ model DeviceToken {
   @@map("device_tokens")
 }
 
+// Immutable audit trail: one row per thing that happened to a trip.
+//
+// WHY A SEPARATE TABLE AND NOT MORE COLUMNS ON Trip
+//
+// Trip holds the CURRENT state. This holds the SEQUENCE. When a customer says
+// "my driver never came", the current state (CANCELLED) is exactly the same
+// whether the driver was offered and declined four times, or accepted and
+// never moved, or was never found at all. Those are three different problems
+// with three different remedies, and only the sequence distinguishes them.
+//
+// Append-only by convention — nothing in the codebase updates or deletes a
+// row here. An audit trail that can be edited is not one.
+model TripEvent {
+  id        String   @id @default(uuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  // "REQUESTED" | "QUOTED" | "OFFERED" | "DECLINED" | "ACCEPTED" | "ARRIVED"
+  // | "STARTED" | "COMPLETED" | "CANCELLED" | "NO_DRIVER" | "OPS_ALERTED"
+  // | "OPS_ESCALATED" | "FARE_DRIFT"
+  type      String
+  // Who caused it, when there is a who. Null for anything the system did.
+  actorId   String?
+  actorRole String?
+  // Small free-form detail: the driver offered, the cancel reason, the fare.
+  // Deliberately loose — the value of an audit trail is that it can record
+  // something nobody anticipated needing.
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  // Reading a trip's history is always "this trip, in order".
+  @@index([tripId, createdAt])
+  @@map("trip_events")
+}
+
 model Notification {
   id        String   @id @default(uuid())
   userId    String
@@ -368,6 +402,23 @@ model DriverProfile {
   // lastCompletedAt drives the idle-time bonus: a driver who has been sitting
   // for forty minutes should outrank an equally-close one who just dropped
   // off, or the same few riders take every job and the rest log out.
+  // SERVER-AUTHORITATIVE LIVENESS.
+  //
+  // isOnline above is a boolean the driver's app sets. If the phone dies, the
+  // OS kills the app, or the battery manager suspends it — all routine on the
+  // Xiaomi/Oppo/Vivo hardware most of this market carries — isOnline stays
+  // true forever. The driver believes they are working, the matcher ranks
+  // them, and every offer burns its full 15-second window on a phone that is
+  // not listening.
+  //
+  // A heartbeat is a claim the app has to keep making. Stop making it and the
+  // server stops believing it, without the app having to notice it died.
+  lastHeartbeatAt DateTime?
+  // Device health, for the driver's own diagnostics screen and for ops to
+  // read remotely instead of asking "is your GPS on?" over the phone.
+  appVersion      String?
+  batteryLevel    Int?
+  networkType     String?
   offersSent      Int       @default(0)
   offersAccepted  Int       @default(0)
   offersDeclined  Int       @default(0)
@@ -509,6 +560,11 @@ model Trip {
   // trips are excluded from settlement and from the ledger entirely — see
   // completeTrip — because a reviewer's ride must never move real money or
   // appear in a driver's earnings.
+  // What the customer was actually charged for cancelling, if anything.
+  // Stored even when zero so a dispute can show the policy that applied
+  // rather than us reconstructing it from timestamps months later.
+  cancellationFee Decimal?  @db.Decimal(10, 2)
+
   isTest         Boolean   @default(false)
 
   offerCount     Int       @default(0)
@@ -551,6 +607,8 @@ model Trip {
   // screens — both filter status alongside a second column, which a
   // single-column index on status alone doesn't serve well.
   @@index([status, vehicleType])
+  events      TripEvent[]
+
   @@index([driverId, status])
   // Serve the ops desk's "nothing is moving" queries — both are polled
   // continuously while the desk is open.

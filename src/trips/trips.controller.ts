@@ -98,4 +98,10 @@ export class TripsController {
   listMine(@CurrentUser() user: ReqUser) {
     return this.tripsService.listMyTrips(user.userId);
   }
+
+  @Get(":id/events")
+  @ApiOperation({ summary: "Everything that happened to this trip, oldest first" })
+  events(@CurrentUser() user: ReqUser, @Param("id") id: string) {
+    return this.tripsService.getTripEvents(id, user.userId, user.role);
+  }
 }

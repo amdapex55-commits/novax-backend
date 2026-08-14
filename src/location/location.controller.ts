@@ -1,4 +1,8 @@
-import { Controller, Get, Query, BadRequestException } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, BadRequestException, UseGuards } from "@nestjs/common";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { Roles } from "../auth/decorators/roles.decorator";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { LocationService } from "./location.service";
@@ -67,5 +71,27 @@ export class LocationController {
       lat: Math.round((p.lat + jitter()) * 10000) / 10000,
       lng: Math.round((p.lng + jitter()) * 10000) / 10000,
     }));
+  }
+
+  /* --------------------------------------------------- driver liveness --- */
+
+  @Post("heartbeat")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("DRIVER")
+  @Throttle({ default: { limit: 240, ttl: 60_000 } })
+  @ApiOperation({ summary: "Driver app check-in — proves the process is still alive" })
+  heartbeat(
+    @CurrentUser() user: { userId: string },
+    @Body() body: { appVersion?: string; batteryLevel?: number; networkType?: string },
+  ) {
+    return this.locationService.recordHeartbeat(user.userId, body ?? {});
+  }
+
+  @Get("driver-status")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("DRIVER")
+  @ApiOperation({ summary: "Am I receiving jobs, and if not, exactly why?" })
+  driverStatus(@CurrentUser() user: { userId: string }) {
+    return this.locationService.getDriverStatus(user.userId);
   }
 }
