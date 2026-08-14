@@ -275,17 +275,46 @@ export class LedgerService {
     // The driver app needs all three to explain itself. Showing a bare
     // negative number without the limit next to it tells a driver they're in
     // trouble without telling them how much trouble, or what clears it.
+    const owed = balance < 0 ? Math.abs(balance) : 0;
+    const limit = DRIVER_CREDIT_LIMIT_PKR;
+    const blocked = limit !== 0 && balance <= -limit;
+
+    /* THE LADDER EXISTS SO NOBODY IS EVER SURPRISED BY THE BLOCK.
+
+       The cap works: a driver past it is filtered out of matching. But being
+       filtered out is silent — the app keeps saying "Online", jobs simply
+       stop arriving, and the driver concludes Nova Go is broken and goes back
+       to Bykea. That is a worse outcome than the debt.
+
+       So the balance is graded, and the grade is what the app renders. The
+       thresholds are fractions of the limit rather than fixed rupees, so
+       changing DRIVER_CREDIT_LIMIT_PKR moves the whole ladder with it instead
+       of leaving warnings that fire after the block.
+
+         ok       under half           nothing shown
+         notice   half to 75%          a quiet line
+         warning  75% to the limit     prominent, with how to pay
+         blocked  at or past the limit no jobs until settled           */
+    const ratio = limit === 0 ? 0 : owed / limit;
+    const level = blocked ? "blocked" : ratio >= 0.75 ? "warning" : ratio >= 0.5 ? "notice" : "ok";
+
     return {
       userId,
       balance,
-      creditLimit: DRIVER_CREDIT_LIMIT_PKR === 0 ? null : -DRIVER_CREDIT_LIMIT_PKR,
+      owed,
+      creditLimit: limit === 0 ? null : -limit,
       // True = not being offered work until they settle (enforced in
       // LocationService.filterEligible, off the same sum as this balance).
-      blocked: DRIVER_CREDIT_LIMIT_PKR !== 0 && balance <= -DRIVER_CREDIT_LIMIT_PKR,
-      amountToSettle:
-        DRIVER_CREDIT_LIMIT_PKR !== 0 && balance <= -DRIVER_CREDIT_LIMIT_PKR
-          ? Math.abs(balance)
-          : 0,
+      blocked,
+      level,
+      // How much room is left before work stops. This is the number a driver
+      // actually plans around — "Rs 640 of trips left" is actionable in a way
+      // that "balance -1360" is not.
+      remainingCredit: limit === 0 ? null : Math.max(0, limit - owed),
+      amountToSettle: blocked ? owed : 0,
+      // Clearing the block needs the full amount; paying down early can be
+      // any amount. Both are useful to state.
+      minimumToUnblock: blocked ? owed : 0,
     };
   }
 
