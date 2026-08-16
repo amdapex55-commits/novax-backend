@@ -132,6 +132,33 @@ export class UsersService {
    * is a free account-enumeration oracle, and the identifier here is a phone
    * number.
    */
+  /**
+   * Ask a human to reset a password.
+   *
+   * There is no self-serve reset because there is no way to deliver one: no
+   * email provider, no SMS sender. A reset flow that cannot deliver is worse
+   * than none — it tells someone help is coming and then never arrives.
+   *
+   * So this records the request and ops actions it with
+   * AdminService.resetUserPassword. The reply is deliberately identical
+   * whether or not the contact matches an account, for the same reason
+   * requestDeletion's is: an unauthenticated form that confirms an identifier
+   * exists is an account-enumeration oracle, and a password form is a more
+   * attractive one to probe than a deletion form.
+   */
+  async requestPasswordReset(contact: string, note?: string) {
+    await this.prisma.passwordResetRequest.create({
+      data: { contact: contact.trim(), note: note?.trim() || null },
+    });
+    this.logger.warn(`Password reset requested for "${contact.trim()}" — ops must action this.`);
+    return {
+      received: true,
+      message:
+        "Request received. If that phone number or email has an account, " +
+        "our team will contact you to reset it. Please allow up to 24 hours.",
+    };
+  }
+
   async requestDeletion(contact: string, note?: string) {
     await this.prisma.deletionRequest.create({
       data: { contact: contact.trim(), note: note?.trim() || null },

@@ -1,3 +1,5 @@
+import * as bcrypt from "bcrypt";
+import { randomBytes } from "crypto";
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { TripStatus, DeliveryStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -181,6 +183,75 @@ export class AdminService {
    * Suspending a driver also forces them offline immediately, otherwise
    * they'd stay in the matching pool until their socket happened to drop.
    */
+  /**
+   * Reset someone's password to a temporary one, and hand it back ONCE.
+   *
+   * This is the answer to PasswordResetRequest. There is no delivery channel
+   * yet, so the loop is closed by a person: ops reads the request, verifies
+   * who they are talking to, calls this, and reads the temporary password out
+   * over the phone.
+   *
+   * The temporary password is returned in the response and stored only as a
+   * hash — there is no way to retrieve it again, which is the point. If ops
+   * loses it, they run this again.
+   *
+   * Every existing session is revoked. If the reason for the reset is that
+   * somebody else has the account, leaving their token alive would defeat the
+   * whole exercise.
+   */
+  async resetUserPassword(userId: string, requestId?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, phone: true, role: true, isActive: true },
+    });
+    if (!user) throw new NotFoundException("User not found");
+
+    // 9 bytes -> 12 base64url chars. Long enough not to be guessable, short
+    // enough to read down a phone line without mistakes.
+    const tempPassword = randomBytes(9).toString("base64url");
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await bcrypt.hash(tempPassword, 10) },
+    });
+
+    // Their old token would otherwise outlive the reset by up to 30 days.
+    await this.denylist.revoke(userId, "password reset by ops");
+
+    if (requestId) {
+      await this.prisma.passwordResetRequest
+        .update({ where: { id: requestId }, data: { status: "COMPLETED", handledAt: new Date() } })
+        .catch(() => {}); // the reset is what matters; bookkeeping is not worth failing it
+    }
+
+    await this.notificationsService.create(
+      userId,
+      "Your password was reset",
+      "Our team reset your password at your request. Sign in with the temporary " +
+        "password you were given, then change it. If this was not you, contact us immediately.",
+    );
+
+    this.logger.warn(`Ops reset the password for ${userId} (${user.role}) and revoked their sessions.`);
+    return {
+      reset: true,
+      userId: user.id,
+      name: user.name,
+      phone: user.phone,
+      // Read this out, then it is gone. It is not stored anywhere in the clear.
+      temporaryPassword: tempPassword,
+      message: "Read this password to them, then tell them to change it after signing in.",
+    };
+  }
+
+  /** The queue ops works through. */
+  async listPasswordResetRequests(status = "OPEN") {
+    return this.prisma.passwordResetRequest.findMany({
+      where: { status },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+    });
+  }
+
   async setUserActive(userId: string, isActive: boolean, reason?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
     if (!user) throw new NotFoundException("User not found");

@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { UsersService } from "./users.service";
 import { DeletionRequestDto } from "./dto/deletion-request.dto";
+import { PasswordResetRequestDto } from "./dto/password-reset-request.dto";
 
 /**
  * Deliberately NOT guarded, and deliberately a separate controller.
@@ -26,5 +27,16 @@ export class PublicUsersController {
   @ApiOperation({ summary: "Request account deletion without signing in (public web form)" })
   requestDeletion(@Body() dto: DeletionRequestDto) {
     return this.usersService.requestDeletion(dto.contact, dto.note);
+  }
+
+  // Same shape and the same reason for being unauthenticated: the person who
+  // needs this is by definition the person who cannot sign in. Rate-limited
+  // harder than deletion — a password form is the more attractive one to
+  // probe, and this one writes a row ops has to read.
+  @Post("password-reset-request")
+  @Throttle({ default: { limit: 3, ttl: 600_000 } })
+  @ApiOperation({ summary: "Ask ops to reset a password without signing in" })
+  requestPasswordReset(@Body() dto: PasswordResetRequestDto) {
+    return this.usersService.requestPasswordReset(dto.contact, dto.note);
   }
 }

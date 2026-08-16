@@ -24,6 +24,23 @@ export class AdminController {
     return this.adminService.getStats();
   }
 
+  // Password recovery, closed by a person. The public request lands in
+  // /users/password-reset-request; this is the queue and the action.
+  @Get("password-reset-requests")
+  @ApiOperation({ summary: "Open password reset requests, oldest first" })
+  listPasswordResetRequests(@Query("status") status?: string) {
+    return this.adminService.listPasswordResetRequests(status || "OPEN");
+  }
+
+  // POST, not GET: it mutates the account and returns a credential exactly
+  // once. VERIFY WHO YOU ARE TALKING TO BEFORE CALLING THIS — it is a
+  // complete account takeover if the person on the phone is not the owner.
+  @Post("users/:id/reset-password")
+  @ApiOperation({ summary: "Set a temporary password and revoke live sessions" })
+  resetUserPassword(@Param("id") id: string, @Body("requestId") requestId?: string) {
+    return this.adminService.resetUserPassword(id, requestId);
+  }
+
   @Get("drivers/pending")
   getPendingDrivers() {
     return this.adminService.listPendingDrivers();

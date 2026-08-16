@@ -308,6 +308,22 @@ model SupportTicket {
 // session, so it can't delete anything directly; it records a request that ops
 // verifies and actions. In-app deletion (DELETE /users/me) is immediate and
 // needs no row here.
+model PasswordResetRequest {
+  id        String   @id @default(uuid())
+  // Phone or email exactly as typed, and deliberately NOT resolved to a
+  // userId — same reasoning as DeletionRequest. An unauthenticated form that
+  // confirms whether an identifier exists is a free account-enumeration
+  // oracle, and a password form is a more attractive one than a deletion form.
+  contact   String
+  note      String?
+  status    String   @default("OPEN") // OPEN | COMPLETED | REJECTED
+  handledAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@map("password_reset_requests")
+}
+
 model DeletionRequest {
   id        String   @id @default(uuid())
   // Phone or email as typed. Deliberately NOT resolved to a userId here: an
