@@ -1,7 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
+import { TokenDenylistService } from "./token-denylist.service";
 
 export interface JwtPayload {
   sub: string; // user id
@@ -15,7 +16,10 @@ export interface JwtPayload {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private denylist: TokenDenylistService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -25,6 +29,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   // Whatever this returns becomes `request.user` in every controller.
   async validate(payload: JwtPayload) {
+    // A valid signature only proves the token was issued by us, not that the
+    // account still exists or is still allowed in. Deleted and suspended
+    // accounts are held here until their tokens age out.
+    if (await this.denylist.isRevoked(payload.sub)) {
+      throw new UnauthorizedException("This session is no longer valid. Please sign in again.");
+    }
     return { userId: payload.sub, role: payload.role };
   }
 }

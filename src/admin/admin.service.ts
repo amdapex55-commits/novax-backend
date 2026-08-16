@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from "@nes
 import { TripStatus, DeliveryStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { TokenDenylistService } from "../auth/token-denylist.service";
 import { LocationGateway } from "../location/location.gateway";
 import { LocationService } from "../location/location.service";
 import { DRIVER_CREDIT_LIMIT_PKR } from "../location/location.service";
@@ -21,6 +22,7 @@ export class AdminService {
     private notificationsService: NotificationsService,
     private locationGateway: LocationGateway,
     private locationService: LocationService,
+    private denylist: TokenDenylistService,
   ) {}
 
   /**
@@ -188,6 +190,16 @@ export class AdminService {
       data: { isActive },
       select: { id: true, name: true, phone: true, role: true, isActive: true },
     });
+
+    // Suspension previously stopped at matching and the socket — a suspended
+    // user's existing access token still worked on every HTTP route. Revoking
+    // makes the suspension mean what ops thinks it means; restoring on
+    // reactivation saves an unsuspended user from a forced sign-in.
+    if (isActive) {
+      await this.denylist.restore(userId);
+    } else {
+      await this.denylist.revoke(userId, reason || "suspended by ops");
+    }
 
     if (!isActive && user.role === "DRIVER") {
       await this.prisma.driverProfile

@@ -10,6 +10,7 @@ import { HealthModule } from "./health/health.module";
 import { LaunchModule } from "./launch/launch.module";
 import { ServiceEnabledGuard } from "./launch/requires-service.decorator";
 import { AuthModule } from "./auth/auth.module";
+import { TokenDenylistModule } from "./auth/token-denylist.module";
 import { UsersModule } from "./users/users.module";
 import { LocationModule } from "./location/location.module";
 import { TripsModule } from "./trips/trips.module";
@@ -59,6 +60,7 @@ import { SafetyModule } from "./safety/safety.module";
     HealthModule,
     LaunchModule,
     AuthModule,
+    TokenDenylistModule,
     UsersModule,
     LocationModule,
     TripsModule,

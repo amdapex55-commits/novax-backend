@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
 import { NotificationsService } from "../notifications/notifications.service";
+import { TokenDenylistService } from "../auth/token-denylist.service";
 import { SetModeDto } from "./dto/set-mode.dto";
 import { DriverOnboardingDto } from "./dto/driver-onboarding.dto";
 
@@ -13,6 +14,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private denylist: TokenDenylistService,
   ) {}
 
   /**
@@ -103,6 +105,11 @@ export class UsersService {
         },
       }),
     ]);
+
+    // Refresh tokens are gone with the transaction above, but the access token
+    // in the app's hands is stateless and lives for up to 30 days — without
+    // this the "deleted" account keeps working on that device until it expires.
+    await this.denylist.revoke(userId, "account deleted");
 
     this.logger.warn(`Account ${userId} anonymised at the user's request (role ${user.role}).`);
     return {
