@@ -23,6 +23,24 @@ export enum UploadPurpose {
 // .exe) into a bucket that's meant to hold photos/PDFs only.
 const ALLOWED_CONTENT_TYPES = [
   "image/jpeg", "image/png", "image/webp", "application/pdf",
+  // WHAT PHONES ACTUALLY SEND.
+  //
+  // The list above is what a developer types. It is not what a camera
+  // produces, and every one of these was rejected in production while the
+  // driver saw only "Failed, tap to retry":
+  //
+  //   image/heic, image/heif  every photo in an iPhone library
+  //   image/jpg               some Android cameras; not a real mime type
+  //   image/pjpeg             older Android WebViews
+  //
+  // The client converts to JPEG where the browser can decode the file, but
+  // Android Chrome cannot decode HEIC at all, so conversion is impossible on
+  // exactly the device combination that needs it most. Accepting these is
+  // what makes the upload work there.
+  //
+  // This is still a whitelist — the point of it is that nobody can presign a
+  // URL for an .html or an .exe, and that is untouched.
+  "image/heic", "image/heif", "image/jpg", "image/pjpeg",
   // Voice pickup notes. Browsers pick their own container: Chrome/Android
   // give webm, Safari gives mp4/aac. Both are accepted so the feature isn't
   // silently iOS-only.

@@ -81,6 +81,21 @@ export class UploadsService {
       );
     }
 
+    /* Be liberal in what we accept, strict in what we store.
+       image/jpg and image/pjpeg are the same bytes as image/jpeg with a
+       wrong label, so they are corrected here rather than propagated into
+       the bucket, the database, and every <img> that later reads them. The
+       signature must be generated with the SAME value the browser will put
+       in its Content-Type header, so this normalisation happens BEFORE the
+       command is built, not after. */
+    const storedContentType =
+      contentType === "image/jpg" || contentType === "image/pjpeg"
+        ? "image/jpeg"
+        : contentType;
+
+    // The extension follows the corrected type, so a file called .HEIC that
+    // was actually converted to JPEG by the client does not end up stored
+    // under a name that misleads whoever opens the bucket later.
     const extension = fileName.includes(".") ? fileName.split(".").pop() : "bin";
     // Namespaced by purpose then user, so an admin browsing the bucket (or a
     // future cleanup job) can reason about what's in it without reading DB rows.
@@ -89,7 +104,7 @@ export class UploadsService {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
-      ContentType: contentType,
+      ContentType: storedContentType,
     });
 
     const uploadUrl = await getSignedUrl(this.s3, command, { expiresIn: PRESIGN_TTL_SECONDS });
