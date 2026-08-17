@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -9,6 +9,7 @@ const PRESIGN_TTL_SECONDS = 300; // 5 minutes to actually perform the PUT
 
 @Injectable()
 export class UploadsService {
+  private readonly logger = new Logger(UploadsService.name);
   private s3: S3Client;
   private bucket: string;
   private publicUrlBase: string;
@@ -19,7 +20,30 @@ export class UploadsService {
     const accessKeyId = this.config.get<string>("R2_ACCESS_KEY_ID", "");
     const secretAccessKey = this.config.get<string>("R2_SECRET_ACCESS_KEY", "");
     this.bucket = this.config.get<string>("R2_BUCKET_NAME", "novago-uploads");
-    this.publicUrlBase = this.config.get<string>("R2_PUBLIC_URL_BASE", "");
+    // Normalised, and checked loudly enough that a typo cannot hide.
+    //
+    // A mistyped base is the nastiest variety of misconfiguration here,
+    // because everything else keeps working: presigning succeeds, the PUT
+    // succeeds, the file really is in the bucket — only the URL written into
+    // the database points nowhere. Nobody notices until a dispatcher opens an
+    // approval weeks later and sees a broken image where a licence should be,
+    // by which point the wrong URL is on every document uploaded since.
+    //
+    // Seen in production: "…r2.de" instead of "…r2.dev".
+    const rawBase = this.config.get<string>("R2_PUBLIC_URL_BASE", "").trim();
+    this.publicUrlBase = rawBase.replace(/\/+$/, "");
+    if (rawBase) {
+      const looksWrong =
+        !/^https?:\/\//i.test(this.publicUrlBase) ||
+        /\.r2\.de$/i.test(this.publicUrlBase);
+      if (looksWrong) {
+        this.logger.error(
+          `R2_PUBLIC_URL_BASE looks wrong: "${this.publicUrlBase}". ` +
+            "Uploads will still succeed, but every stored document URL will be unreachable. " +
+            "Expected something like https://pub-<hash>.r2.dev (note the trailing 'v').",
+        );
+      }
+    }
 
     // Presigning is pure local crypto (SigV4) — it never contacts R2, so a
     // missing accountId doesn't fail here. It silently falls through to the
