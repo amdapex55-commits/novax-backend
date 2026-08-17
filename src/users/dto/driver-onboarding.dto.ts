@@ -39,6 +39,25 @@ export class DriverOnboardingDto {
   @IsString()
   licenseDocUrl?: string;
 
+  /* The two sides of the licence. Both columns exist on DriverProfile and
+     the ops approvals screen reads both — but neither was settable through
+     this DTO, so the only way to populate them was at registration, which is
+     exactly where an upload cannot happen: /uploads/presign is behind the
+     JWT guard and a signing-up driver has no token yet.
+     With these here, the documents can be uploaded immediately AFTER the
+     account exists, which is the only order that can work. */
+  @ApiPropertyOptional({ example: "https://pub-xxxx.r2.dev/kyc-doc/…/front.jpg" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  licenseFrontUrl?: string;
+
+  @ApiPropertyOptional({ example: "https://pub-xxxx.r2.dev/kyc-doc/…/back.jpg" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  licenseBackUrl?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
