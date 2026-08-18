@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { LocationGateway } from "../location/location.gateway";
+import { NotificationsService } from "../notifications/notifications.service";
 
 const CONTEXT_TYPES = ["TRIP", "DELIVERY", "FOOD_ORDER", "ERRAND"] as const;
 type ContextType = (typeof CONTEXT_TYPES)[number];
@@ -10,6 +11,7 @@ export class ChatService {
   constructor(
     private prisma: PrismaService,
     private locationGateway: LocationGateway,
+    private notificationsService: NotificationsService,
   ) {}
 
   private assertValidContextType(contextType: string): asserts contextType is ContextType {
@@ -55,7 +57,7 @@ export class ChatService {
     return this.prisma.chatMessage.findMany({
       where: { contextType, contextId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, senderId: true, body: true, createdAt: true },
+      select: { id: true, senderId: true, body: true, createdAt: true, deliveredAt: true, readAt: true },
     });
   }
 
@@ -68,13 +70,71 @@ export class ChatService {
     if (!a || !b) throw new BadRequestException("This conversation doesn't have both participants yet");
 
     const message = await this.prisma.chatMessage.create({
-      data: { contextType, contextId, senderId, body },
-      select: { id: true, senderId: true, body: true, createdAt: true },
+      // Stamped delivered on write: it is on our server and on its way to a
+      // socket that is very likely open. Read is the one that must be earned.
+      data: { contextType, contextId, senderId, body, deliveredAt: new Date() },
+      select: { id: true, senderId: true, body: true, createdAt: true, deliveredAt: true, readAt: true },
     });
 
     const recipientId = senderId === a ? b : a;
     this.locationGateway.emitToUser(recipientId, "chat:message", { contextType, contextId, message });
 
+    /* THE SOCKET EVENT WAS THE ONLY THING THAT FIRED.
+
+       Only the open thread listens for chat:message, so a message sent to
+       someone who is not sitting on that exact screen reached nobody — no
+       badge, no buzz, no trace. A passenger asking "which gate?" watched
+       their words go nowhere while the rider circled the block.
+
+       The notification is what makes it arrive when the thread is closed,
+       which is almost always. Not awaited: a slow notification must never
+       delay the message itself. */
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
+      select: { name: true },
+    });
+    void this.notificationsService.create(
+      recipientId,
+      sender?.name ? `Message from ${sender.name}` : "New message",
+      body.length > 90 ? `${body.slice(0, 90)}…` : body,
+    );
+
     return message;
+  }
+
+  /**
+   * Mark everything the other person sent in this thread as read.
+   *
+   * Called when the thread is opened, and again on each incoming message
+   * while it stays open. The sender is told over the socket so their ticks
+   * turn without polling.
+   */
+  async markRead(contextType: string, contextId: string, readerId: string) {
+    this.assertValidContextType(contextType);
+    const { a, b } = await this.resolveParticipants(contextType, contextId);
+    if (readerId !== a && readerId !== b) throw new ForbiddenException("Not part of this conversation");
+
+    const now = new Date();
+    const res = await this.prisma.chatMessage.updateMany({
+      where: { contextType, contextId, senderId: { not: readerId }, readAt: null },
+      data: { readAt: now, deliveredAt: now },
+    });
+
+    if (res.count > 0) {
+      const otherId = readerId === a ? b : a;
+      if (otherId) {
+        this.locationGateway.emitToUser(otherId, "chat:read", { contextType, contextId, at: now.toISOString() });
+      }
+    }
+    return { read: res.count };
+  }
+
+  /** How many messages in this thread the caller has not read. */
+  async unreadCount(contextType: string, contextId: string, userId: string) {
+    this.assertValidContextType(contextType);
+    const count = await this.prisma.chatMessage.count({
+      where: { contextType, contextId, senderId: { not: userId }, readAt: null },
+    });
+    return { count };
   }
 }

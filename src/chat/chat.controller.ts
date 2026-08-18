@@ -34,4 +34,24 @@ export class ChatController {
   ) {
     return this.chatService.sendMessage(contextType, contextId, user.userId, dto.body);
   }
+
+  @Post(":contextType/:contextId/read")
+  @ApiOperation({ summary: "Mark this thread's incoming messages as read" })
+  markRead(
+    @CurrentUser() user: ReqUser,
+    @Param("contextType") contextType: string,
+    @Param("contextId") contextId: string,
+  ) {
+    return this.chatService.markRead(contextType, contextId, user.userId);
+  }
+
+  @Get(":contextType/:contextId/unread")
+  @ApiOperation({ summary: "How many messages in this thread the caller has not read" })
+  unread(
+    @CurrentUser() user: ReqUser,
+    @Param("contextType") contextType: string,
+    @Param("contextId") contextId: string,
+  ) {
+    return this.chatService.unreadCount(contextType, contextId, user.userId);
+  }
 }

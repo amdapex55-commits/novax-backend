@@ -192,6 +192,14 @@ model ChatMessage {
   body        String   @db.VarChar(1000)
   createdAt   DateTime @default(now())
 
+  // Delivery and read state, so both sides know whether a message actually
+  // landed. Without these a passenger asking "which gate?" has no idea
+  // whether their rider has seen it, and neither does the rider. Nullable
+  // rather than boolean: WHEN it was read is what makes a dispute readable
+  // later, and a null is an honest "not yet" rather than a false.
+  deliveredAt DateTime?
+  readAt      DateTime?
+
   // Every read is "give me this thread's messages in order" — the one query
   // shape this table ever serves.
   @@index([contextType, contextId, createdAt])
