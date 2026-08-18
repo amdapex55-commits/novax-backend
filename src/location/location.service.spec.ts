@@ -45,13 +45,23 @@ function makeService(opts: {
     Promise.resolve((where.userId?.in ?? []).map((userId: string) => ({ userId }))),
   );
 
+  /* Every job table the busy-driver check reads. Default to "nobody is on a
+     job", so these tests keep testing what they are about (freshness,
+     segregation, credit) rather than accidentally testing availability —
+     while still exercising the real code path. A test that needs a busy
+     driver overrides jobFindMany. */
+  const jobFindMany = jest.fn().mockResolvedValue([]);
   const prisma = {
     user: { findMany },
     driverProfile: { findMany: profileFindMany },
     ledgerEntry: { groupBy },
+    trip: { findMany: jobFindMany },
+    delivery: { findMany: jobFindMany },
+    foodOrder: { findMany: jobFindMany },
+    errand: { findMany: jobFindMany },
   } as unknown as PrismaService;
 
-  return { service: new LocationService(redis, prisma), zrem, del, mget, findMany, groupBy, profileFindMany };
+  return { service: new LocationService(redis, prisma), zrem, del, mget, findMany, groupBy, profileFindMany, jobFindMany };
 }
 
 describe("LocationService.findNearbyDrivers — GPS freshness", () => {

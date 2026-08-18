@@ -285,6 +285,25 @@ export class LocationService {
     const overLimit = await this.driversOverCreditLimit(ids);
     for (const id of overLimit) allowedIds.delete(id);
 
+    /* A DRIVER CARRYING SOMEONE IS NOT AVAILABLE.
+       Nothing checked this. A driver mid-trip stays in the Redis geo set,
+       stays isOnline, stays APPROVED — so they were a candidate for the next
+       job, and were routinely offered one. The driver never saw it (their
+       app leaves the home screen, and with it the offer listener) so the
+       offer sat unanswered for its full fifteen seconds and only then
+       cascaded to the next driver.
+
+       That is the customer's wait, not the driver's: with a handful of riders
+       online, a parcel could burn a minute being offered to three people who
+       were all already busy. It also reads to ops as "no drivers available"
+       when there were plenty.
+
+       Checked here for the same reason the credit limit is: trips,
+       deliveries, food orders and errands all match through this one
+       function, and a per-service check is four places to forget it. */
+    const busy = await this.driversOnAJob(ids);
+    for (const id of busy) allowedIds.delete(id);
+
     const rejected = ids.filter((id) => !allowedIds.has(id));
 
     if (rejected.length) {
@@ -297,10 +316,15 @@ export class LocationService {
       // Over-limit drivers are deliberately NOT evicted: they're still online
       // and physically present, and the moment their payment lands they should
       // be matchable again without having to toggle offline and back on.
-      const overLimitSet = new Set(overLimit);
+      // Over-limit and busy drivers are deliberately NOT evicted: both are
+      // online and physically present, and both become matchable again on
+      // their own — one when payment lands, the other when they finish the
+      // job. Evicting them would take them off the map until they toggled
+      // offline and back on, which is a worse bug than the one being fixed.
+      const keepInGeoSet = new Set([...overLimit, ...busy]);
       await Promise.all(
         rejected
-          .filter((id) => !overLimitSet.has(id))
+          .filter((id) => !keepInGeoSet.has(id))
           .map((id) => this.removeDriver(id).catch(() => {})),
       );
     }
@@ -316,6 +340,52 @@ export class LocationService {
    * reports — so what blocks a driver here is exactly the number their wallet
    * screen shows them, and nobody has to reconcile two different truths.
    */
+  /**
+   * Which of these drivers are already on a job.
+   *
+   * One query per job type rather than a per-driver lookup, and only the
+   * statuses that actually occupy a rider:
+   *
+   *   MATCHING  — they are being offered something right now. Offering them a
+   *               second thing in the same fifteen-second window means one of
+   *               the two is guaranteed to expire unanswered.
+   *   MATCHED / IN_PROGRESS / PICKED_UP / IN_TRANSIT — they are carrying it.
+   *
+   * REQUESTED is not here: that is a job with no driver attached yet.
+   */
+  private async driversOnAJob(driverIds: string[]): Promise<string[]> {
+    if (driverIds.length === 0) return [];
+    const driverId = { in: driverIds };
+
+    const [trips, deliveries, foodOrders, errands] = await Promise.all([
+      this.prisma.trip.findMany({
+        where: { driverId, status: { in: ["MATCHING", "MATCHED", "IN_PROGRESS"] } },
+        select: { driverId: true },
+      }),
+      this.prisma.delivery.findMany({
+        where: { driverId, status: { in: ["MATCHING", "MATCHED", "PICKED_UP", "IN_TRANSIT"] } },
+        select: { driverId: true },
+      }),
+      this.prisma.foodOrder.findMany({
+        where: { driverId, status: { in: ["MATCHING", "ASSIGNED", "PICKED_UP"] } },
+        select: { driverId: true },
+      }).catch(() => []),
+      this.prisma.errand.findMany({
+        where: { driverId, status: { in: ["MATCHING", "ACCEPTED", "SHOPPING", "ON_THE_WAY"] } },
+        select: { driverId: true },
+      }).catch(() => []),
+    ]);
+
+    const busy = new Set<string>();
+    for (const row of [...trips, ...deliveries, ...foodOrders, ...errands]) {
+      if (row.driverId) busy.add(row.driverId);
+    }
+    if (busy.size) {
+      this.logger.debug(`Skipping ${busy.size} driver(s) already on a job.`);
+    }
+    return [...busy];
+  }
+
   private async driversOverCreditLimit(driverIds: string[]): Promise<string[]> {
     if (DRIVER_CREDIT_LIMIT_PKR === 0 || driverIds.length === 0) return [];
 
