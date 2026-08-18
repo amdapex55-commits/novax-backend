@@ -96,7 +96,7 @@ async function main() {
 
   const rider = await upsertDemo({
     phone: DEMO_RIDER_PHONE,
-    email: "demo.customer@novago.pk",
+    email: "demo.customer@novagorides.com",
     name: "Play Review",
     role: "RIDER",
     kycStatus: "APPROVED",
@@ -105,7 +105,7 @@ async function main() {
 
   const driver = await upsertDemo({
     phone: DEMO_DRIVER_PHONE,
-    email: "demo.driver@novago.pk",
+    email: "demo.driver@novagorides.com",
     name: "Play Review",
     role: "DRIVER",
     // Pre-approved on purpose: this is the whole reason the script exists.
@@ -116,8 +116,8 @@ async function main() {
   console.log(`
   Demo accounts ready.
 
-    Customer   ${rider.phone}   /  demo.customer@novago.pk
-    Driver     ${driver.phone}  /  demo.driver@novago.pk   (KYC approved)
+    Customer   ${rider.phone}   /  demo.customer@novagorides.com
+    Driver     ${driver.phone}  /  demo.driver@novagorides.com   (KYC approved)
 
   Both use the DEMO_PASSWORD you just passed. Put these in
   Play Console -> App access -> "All or some functionality is restricted",

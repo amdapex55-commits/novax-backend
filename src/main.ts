@@ -59,7 +59,7 @@ async function bootstrap() {
   );
 
   // CORS_ORIGINS is a comma-separated allowlist (e.g.
-  // "https://amdapex55-commits.github.io,https://novago.pk"). Unset =>
+  // "https://amdapex55-commits.github.io,https://novagorides.com"). Unset =>
   // wide-open, which is fine for local dev but is exactly how a hostile page
   // in someone's browser gets to call this API with their session, so
   // production is required to set it (see config.validation.ts).
