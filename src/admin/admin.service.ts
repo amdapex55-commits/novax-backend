@@ -38,7 +38,7 @@ export class AdminService {
    */
   async listDriverBalances() {
     const drivers = await this.prisma.user.findMany({
-      where: { role: "DRIVER" },
+      where: { role: "DRIVER", isActive: true },
       select: { id: true, name: true, phone: true, isActive: true, kycStatus: true },
       take: 500,
     });
@@ -134,16 +134,27 @@ export class AdminService {
       this.prisma.trip.count({ where: { status: { in: ACTIVE_TRIP_STATUSES } } }),
       this.prisma.delivery.count({ where: { status: { in: ACTIVE_DELIVERY_STATUSES } } }),
       this.prisma.driverProfile.count({ where: { isOnline: true } }),
-      this.prisma.user.count({ where: { role: "DRIVER", kycStatus: "PENDING" } }),
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: { role: "DRIVER" } }),
+      /* DELETION ANONYMISES, IT DOES NOT REMOVE.
+         A deleted account keeps its row — phone and email replaced with a
+         tombstone, isActive false — so it stays a DRIVER with kycStatus
+         PENDING forever. None of these counts excluded it, so the dashboard
+         reported 23 drivers awaiting approval when 13 of them were deleted
+         accounts nobody could ever action, and "total drivers" counted people
+         who no longer exist. Every headline number ops steers by was wrong in
+         the same direction. */
+      this.prisma.user.count({ where: { role: "DRIVER", kycStatus: "PENDING", isActive: true } }),
+      this.prisma.user.count({ where: { isActive: true } }),
+      this.prisma.user.count({ where: { role: "DRIVER", isActive: true } }),
     ]);
     return { activeTrips, activeDeliveries, onlineDrivers, pendingKyc, totalUsers, totalDrivers };
   }
 
   listPendingDrivers() {
     return this.prisma.user.findMany({
-      where: { role: "DRIVER", kycStatus: "PENDING" },
+      // isActive excludes deleted accounts — see the note in getStats(). The
+      // queue is a list of people waiting on a human decision, and a deleted
+      // account is not waiting for anything.
+      where: { role: "DRIVER", kycStatus: "PENDING", isActive: true },
       select: {
         id: true,
         phone: true,

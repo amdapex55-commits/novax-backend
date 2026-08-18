@@ -219,6 +219,27 @@ export class UsersService {
   // Admin-only in practice (guard this route with @Roles("ADMIN")) — approve a
   // driver's KYC so they're allowed to go online. Never self-service.
   async approveDriverKyc(userId: string) {
+    /* APPROVING A DELETED OR SUSPENDED ACCOUNT MEANT SOMETHING.
+       Deletion anonymises the row rather than removing it, so a tombstoned
+       driver stayed APPROVABLE. Flipping one to APPROVED could not let them
+       sign in — passwordHash is null — but it counted them as an approved
+       driver in every figure ops steers by, and left an approved row for an
+       account the person has asked us to erase. The same guard covers a
+       driver suspended for a safety incident being quietly re-approved. */
+    const target = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, isActive: true },
+    });
+    if (!target) throw new NotFoundException("User not found");
+    if (target.role !== "DRIVER") {
+      throw new BadRequestException("That account is not a driver.");
+    }
+    if (!target.isActive) {
+      throw new BadRequestException(
+        "That account has been deleted or suspended — it can't be approved.",
+      );
+    }
+
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { kycStatus: "APPROVED" },
