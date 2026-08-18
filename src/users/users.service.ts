@@ -7,6 +7,12 @@ import { TokenDenylistService } from "../auth/token-denylist.service";
 import { SetModeDto } from "./dto/set-mode.dto";
 import { DriverOnboardingDto } from "./dto/driver-onboarding.dto";
 
+/** Fields ops keep about a driver that the driver must never receive. */
+function stripInternalFields<T extends Record<string, unknown>>(profile: T) {
+  const { onboardingNotes, ...safe } = profile;
+  return safe;
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -240,9 +246,14 @@ export class UsersService {
       );
     }
 
+    /* RETURNING THE WHOLE ROW MEANT RETURNING passwordHash.
+       prisma.update() with no select gives every column, and this response
+       goes to the ops console, into its network tab and its logs. Narrowed to
+       what an approval screen actually needs. */
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { kycStatus: "APPROVED" },
+      select: { id: true, name: true, phone: true, role: true, kycStatus: true, isActive: true },
     });
     await this.notificationsService.create(
       userId,
@@ -323,7 +334,12 @@ export class UsersService {
       kycStatus: user.kycStatus,
       submittedForReviewAt: profile?.submittedForReviewAt ?? null,
       trainingCompleted: profile?.trainingCompleted ?? false,
-      profile,
+      /* onboardingNotes is what ops write to each other about this driver —
+         "licence looks altered", "call before approving". It was going
+         straight back to the driver inside their own onboarding status.
+         Stripped here rather than at the call site, because there is only one
+         honest answer and four screens read this. */
+      profile: profile ? stripInternalFields(profile) : profile,
       missing,
       canSubmit: missing.length === 0,
     };

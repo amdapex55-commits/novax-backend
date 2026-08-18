@@ -8,6 +8,7 @@ import { RatingsService } from "../ratings/ratings.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateDeliveryDto } from "./dto/create-delivery.dto";
 import { estimateFare, haversineKm } from "../trips/fare.util";
+import { LaunchPolicyService } from "../launch/launch-policy.service";
 
 // Deliberately mirrors TripsService's matching logic (expanding-radius search,
 // timed offer, auto-cascade on decline) rather than sharing a base class with
@@ -30,11 +31,20 @@ export class DeliveryService {
     private ledgerService: LedgerService,
     private ratingsService: RatingsService,
     private loyaltyService: LoyaltyService,
+    private launchPolicy: LaunchPolicyService,
   ) {}
 
   async createDelivery(senderId: string, dto: CreateDeliveryDto) {
     const distanceKm = haversineKm(dto.pickupLat, dto.pickupLng, dto.dropoffLat, dto.dropoffLng);
     const fare = estimateFare("PARCEL", distanceKm);
+
+    /* THE GEOFENCE ONLY EVER RAN ON RIDES.
+       LaunchModule is @Global and its own comment says trips, food, delivery
+       and errands should all enforce the same policy — but only trips ever
+       called it. So a parcel could be booked from anywhere on earth: outside
+       the pilot zone, in another city, in another country, and the matcher
+       would dutifully search for a driver who could not possibly exist. */
+    this.launchPolicy.assertWithinZone(dto.pickupLat, dto.pickupLng);
 
     const delivery = await this.prisma.delivery.create({
       data: {

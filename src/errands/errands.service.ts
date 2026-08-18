@@ -7,6 +7,7 @@ import { LedgerService } from "../ledger/ledger.service";
 import { LoyaltyService } from "../loyalty/loyalty.service";
 import { CreateErrandDto } from "./dto/create-errand.dto";
 import { estimateFare, haversineKm } from "../trips/fare.util";
+import { LaunchPolicyService } from "../launch/launch-policy.service";
 
 // Same expanding-radius cascade shape as Trips/Delivery/FoodOrders, scoped
 // to FOOD_ERRAND-mode drivers and centered on the store (not the requester)
@@ -25,9 +26,15 @@ export class ErrandsService {
     private excludedDriversStore: ExcludedDriversStore,
     private ledgerService: LedgerService,
     private loyaltyService: LoyaltyService,
+    private launchPolicy: LaunchPolicyService,
   ) {}
 
   async createErrand(requesterId: string, dto: CreateErrandDto) {
+    /* Geofenced for the same reason parcels now are: LaunchModule is @Global
+       and only trips were ever calling it, so an errand could be requested
+       from any coordinate on the planet. */
+    this.launchPolicy.assertWithinZone(dto.storeLat, dto.storeLng);
+
     const distanceKm = haversineKm(dto.storeLat, dto.storeLng, dto.dropoffLat, dto.dropoffLng);
     const serviceFee = estimateFare("ERRAND", distanceKm);
 

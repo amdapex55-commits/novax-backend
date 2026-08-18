@@ -20,7 +20,23 @@ export class RestaurantsService {
   async getMyRestaurant(ownerId: string) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { ownerId },
-      include: { menuItems: { orderBy: { category: "asc" } } },
+      /* A CUSTOMER BROWSING RESTAURANTS WAS BEING SENT THEIR BANK DETAILS.
+         Neither of these queries narrowed the columns, so payoutMethod,
+         payoutAccountName and payoutAccountNumber travelled to every browser
+         that opened the food tab. Listed explicitly — an allowlist, so a
+         column added later is invisible by default rather than public by
+         default. */
+      select: {
+        id: true, name: true, description: true, cuisineTags: true,
+        lat: true, lng: true, address: true,
+        logoUrl: true, bannerUrl: true, isOpen: true, status: true,
+        rating: true, prepTimeMinutes: true,
+        /* Deliberately absent: payoutMethod, payoutAccountName,
+           payoutAccountNumber, onboardingNotes, notifyPhone, ownerName,
+           ownerPhone, commissionRate, ownerId. None of them are a
+           customer's business, and several are the restaurant's banking. */
+        menuItems: { orderBy: { category: "asc" } },
+      },
     });
     if (!restaurant) throw new NotFoundException("No restaurant registered for this account yet");
     return restaurant;
@@ -87,7 +103,23 @@ export class RestaurantsService {
   async getPublicDetail(id: string) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id },
-      include: { menuItems: { where: { isAvailable: true }, orderBy: { category: "asc" } } },
+      /* A CUSTOMER BROWSING RESTAURANTS WAS BEING SENT THEIR BANK DETAILS.
+         Neither of these queries narrowed the columns, so payoutMethod,
+         payoutAccountName and payoutAccountNumber travelled to every browser
+         that opened the food tab. Listed explicitly — an allowlist, so a
+         column added later is invisible by default rather than public by
+         default. */
+      select: {
+        id: true, name: true, description: true, cuisineTags: true,
+        lat: true, lng: true, address: true,
+        logoUrl: true, bannerUrl: true, isOpen: true, status: true,
+        rating: true, prepTimeMinutes: true,
+        /* Deliberately absent: payoutMethod, payoutAccountName,
+           payoutAccountNumber, onboardingNotes, notifyPhone, ownerName,
+           ownerPhone, commissionRate, ownerId. None of them are a
+           customer's business, and several are the restaurant's banking. */
+        menuItems: { where: { isAvailable: true }, orderBy: { category: "asc" } },
+      },
     });
     if (!restaurant) throw new NotFoundException("Restaurant not found");
     return restaurant;
