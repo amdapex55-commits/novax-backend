@@ -24,16 +24,16 @@ enum KycStatus {
 }
 
 model User {
-  id          String    @id @default(uuid())
-  phone       String    @unique
-  name        String?
+  id           String    @id @default(uuid())
+  phone        String    @unique
+  name         String?
   // Split from `name` so signup can ask for both and ops can sort a list of
   // drivers sensibly. `name` stays the first name.
-  lastName    String?
+  lastName     String?
   // Optional and unique. Used as an alternative login identifier to phone —
   // people forget which number they signed up with far more often than they
   // forget their email.
-  email       String?   @unique
+  email        String?   @unique
   // Bcrypt hash. NULLABLE on purpose: accounts created through the OTP flow
   // have no password, and that flow still works. When SMS is provisioned,
   // password login and OTP login can run side by side rather than one
@@ -41,11 +41,11 @@ model User {
   passwordHash String?
   // Collected at driver signup; a person's address, so it lives on the user
   // rather than the driver profile.
-  address     String?
-  role        Role      @default(RIDER)
-  kycStatus   KycStatus @default(PENDING)
-  rating      Float     @default(5.0)
-  isActive    Boolean   @default(true)
+  address      String?
+  role         Role      @default(RIDER)
+  kycStatus    KycStatus @default(PENDING)
+  rating       Float     @default(5.0)
+  isActive     Boolean   @default(true)
 
   // REVIEW / TEST ACCOUNT. Set only by scripts/seed-demo-accounts.js or an
   // admin — there is no endpoint and no signup path that can set it, because
@@ -60,9 +60,9 @@ model User {
   // matched to a test driver, and a test driver only ever receives test trips.
   // See LocationService.filterEligible, which is the single place every
   // service matches through.
-  isTestAccount Boolean @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  isTestAccount Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Loyalty & referrals — every user gets a referral code so they can refer
   // others regardless of role; points accrue from completed trips/deliveries
@@ -70,32 +70,32 @@ model User {
   // backfilled lazily (LoyaltyService.ensureReferralCode) rather than
   // required, so `prisma db push` doesn't choke adding a NOT NULL unique
   // column to a table that already has real rows in it from testing.
-  loyaltyPoints Int      @default(0)
-  referralCode  String?  @unique
+  loyaltyPoints Int     @default(0)
+  referralCode  String? @unique
   referredById  String?
-  referredBy    User?    @relation("Referrals", fields: [referredById], references: [id])
-  referrals     User[]   @relation("Referrals")
+  referredBy    User?   @relation("Referrals", fields: [referredById], references: [id])
+  referrals     User[]  @relation("Referrals")
 
-  otpCodes      OtpCode[]
-  refreshTokens RefreshToken[]
-  deviceTokens  DeviceToken[]
-  driverProfile DriverProfile?
-  tripsAsRider  Trip[]         @relation("RiderTrips")
-  tripsAsDriver Trip[]         @relation("DriverTrips")
-  deliveriesAsSender Delivery[] @relation("SenderDeliveries")
-  deliveriesAsDriver Delivery[] @relation("DriverDeliveries")
-  ledgerEntries LedgerEntry[]
-  ratingsGiven    Rating[] @relation("RatingsGiven")
-  ratingsReceived Rating[] @relation("RatingsReceived")
-  notifications   Notification[]
-  supportTickets  SupportTicket[]
+  otpCodes           OtpCode[]
+  refreshTokens      RefreshToken[]
+  deviceTokens       DeviceToken[]
+  driverProfile      DriverProfile?
+  tripsAsRider       Trip[]          @relation("RiderTrips")
+  tripsAsDriver      Trip[]          @relation("DriverTrips")
+  deliveriesAsSender Delivery[]      @relation("SenderDeliveries")
+  deliveriesAsDriver Delivery[]      @relation("DriverDeliveries")
+  ledgerEntries      LedgerEntry[]
+  ratingsGiven       Rating[]        @relation("RatingsGiven")
+  ratingsReceived    Rating[]        @relation("RatingsReceived")
+  notifications      Notification[]
+  supportTickets     SupportTicket[]
 
   // Tri-modal (Food / Bike / Taxi) additions
-  restaurant             Restaurant?
-  foodOrdersAsCustomer   FoodOrder[] @relation("FoodOrdersAsCustomer")
-  foodOrdersAsDriver     FoodOrder[] @relation("FoodOrdersAsDriver")
-  errandsAsRequester     Errand[]    @relation("ErrandsAsRequester")
-  errandsAsDriver        Errand[]    @relation("ErrandsAsDriver")
+  restaurant           Restaurant?
+  foodOrdersAsCustomer FoodOrder[] @relation("FoodOrdersAsCustomer")
+  foodOrdersAsDriver   FoodOrder[] @relation("FoodOrdersAsDriver")
+  errandsAsRequester   Errand[]    @relation("ErrandsAsRequester")
+  errandsAsDriver      Errand[]    @relation("ErrandsAsDriver")
 
   chatMessages ChatMessage[]
   incidents    Incident[]
@@ -132,7 +132,7 @@ model AnalyticsEvent {
 }
 
 enum IncidentType {
-  SOS              // panic button pressed during an active job
+  SOS // panic button pressed during an active job
   ACCIDENT
   HARASSMENT
   VEHICLE_BREAKDOWN
@@ -150,11 +150,11 @@ enum IncidentStatus {
 // where the person was when they pressed it, since "where are they right
 // now" is the first question anyone responding will ask.
 model Incident {
-  id          String         @id @default(uuid())
-  userId      String
-  user        User           @relation(fields: [userId], references: [id])
-  type        IncidentType   @default(SOS)
-  status      IncidentStatus @default(OPEN)
+  id     String         @id @default(uuid())
+  userId String
+  user   User           @relation(fields: [userId], references: [id])
+  type   IncidentType   @default(SOS)
+  status IncidentStatus @default(OPEN)
 
   // Which job it happened on, if any (same context pattern as ChatMessage).
   contextType String? // "TRIP" | "DELIVERY" | "FOOD_ORDER" | "ERRAND"
@@ -168,7 +168,7 @@ model Incident {
   handledAt   DateTime?
   resolution  String?
 
-  createdAt   DateTime       @default(now())
+  createdAt DateTime @default(now())
 
   @@index([status, createdAt])
   @@index([userId])
@@ -213,19 +213,19 @@ model ChatMessage {
 // for driver A landing on the phone of driver B. Keying on userId instead
 // would leave the old row alive and the notification would go to both.
 model DeviceToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid())
+  token      String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   // "android" | "ios" | "web"
-  platform  String
+  platform   String
   // Which of the four apps this install is, so a customer notification is
   // never delivered to a driver build sitting on the same phone.
-  app       String
+  app        String
   // Bumped every time the app registers, which is every cold start. A token
   // that has not been seen in months is a dead install and can be pruned.
   lastSeenAt DateTime @default(now())
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   // Sending to a user means "every device that user has registered", which is
   // this index. app is in it because every send is scoped to one app.
@@ -309,31 +309,31 @@ model SupportTicket {
 // verifies and actions. In-app deletion (DELETE /users/me) is immediate and
 // needs no row here.
 model PasswordResetRequest {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   // Phone or email exactly as typed, and deliberately NOT resolved to a
   // userId — same reasoning as DeletionRequest. An unauthenticated form that
   // confirms whether an identifier exists is a free account-enumeration
   // oracle, and a password form is a more attractive one than a deletion form.
   contact   String
   note      String?
-  status    String   @default("OPEN") // OPEN | COMPLETED | REJECTED
+  status    String    @default("OPEN") // OPEN | COMPLETED | REJECTED
   handledAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([status, createdAt])
   @@map("password_reset_requests")
 }
 
 model DeletionRequest {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   // Phone or email as typed. Deliberately NOT resolved to a userId here: an
   // unauthenticated form that confirms whether an identifier exists is a free
   // account-enumeration oracle.
   contact   String
   note      String?
-  status    String   @default("OPEN") // OPEN | COMPLETED | REJECTED
+  status    String    @default("OPEN") // OPEN | COMPLETED | REJECTED
   handledAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([status, createdAt])
   @@map("deletion_requests")
@@ -343,16 +343,16 @@ model DeletionRequest {
 // they've already called — without it the list is just an ever-growing pile
 // and the same company gets contacted twice or never.
 model BusinessLead {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   companyName String
   contactName String
   phone       String
   email       String?
   notes       String?
-  status      String   @default("NEW") // NEW | CONTACTED | CLOSED
+  status      String    @default("NEW") // NEW | CONTACTED | CLOSED
   handledAt   DateTime?
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@map("business_leads")
 }
@@ -360,48 +360,48 @@ model BusinessLead {
 // Extra fields only relevant when role = DRIVER.
 // Kept as a separate table so the `users` table stays lean for riders.
 model DriverProfile {
-  id            String   @id @default(uuid())
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vehicleType   String   // "bike" | "rickshaw" | "car"
+  id            String  @id @default(uuid())
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType   String // "bike" | "rickshaw" | "car"
   vehiclePlate  String?
   cnicNumber    String?
-  licenseDocUrl String?  // Cloudflare R2 object URL
-  isOnline      Boolean  @default(false)
+  licenseDocUrl String? // Cloudflare R2 object URL
+  isOnline      Boolean @default(false)
 
   // --- Onboarding / ops (what a human actually needs to approve a driver) ---
   // Every one of these is reviewed by a real person in the ops dashboard
   // before kycStatus flips to APPROVED — the app only collects them.
-  cnicFrontUrl        String?
-  cnicBackUrl         String?
+  cnicFrontUrl          String?
+  cnicBackUrl           String?
   // Driving licence, both sides. licenseDocUrl above predates this and is
   // kept for rows already using it; new signups fill these two.
-  licenseFrontUrl     String?
-  licenseBackUrl      String?
-  vehicleDocUrl       String?  // registration book / ownership papers
-  vehiclePhotoUrl     String?
+  licenseFrontUrl       String?
+  licenseBackUrl        String?
+  vehicleDocUrl         String? // registration book / ownership papers
+  vehiclePhotoUrl       String?
   // Which part of the city they'll work. Free text for now (single-city MVP);
   // becomes a real Zone relation when there's more than one city.
-  serviceZone         String?
+  serviceZone           String?
   // Cash-only launch: this is where the platform sends the driver's earnings,
   // NOT a card on file. Nothing here is a payment credential — it's a payout
   // destination the ops team pays out to manually.
-  payoutMethod        String?  // "JAZZCASH" | "EASYPAISA" | "BANK"
-  payoutAccountName   String?
-  payoutAccountNumber String?
+  payoutMethod          String? // "JAZZCASH" | "EASYPAISA" | "BANK"
+  payoutAccountName     String?
+  payoutAccountNumber   String?
   emergencyContactName  String?
   emergencyContactPhone String?
   // Ops checklist — set by an admin during onboarding, not self-service.
-  trainingCompleted   Boolean  @default(false)
-  onboardingNotes     String?  // internal ops notes, never shown to the driver
-  submittedForReviewAt DateTime?
+  trainingCompleted     Boolean   @default(false)
+  onboardingNotes       String? // internal ops notes, never shown to the driver
+  submittedForReviewAt  DateTime?
 
   // Dual-mode toggle: a driver only ever receives offers from ONE queue at a
   // time — "RIDE" (Bike/Taxi trip + parcel matching) or "FOOD_ERRAND" (food
   // delivery + buy-for-me matching). Switching is a single tap in the app;
   // kept as a plain string (not an enum) so a 3rd mode can be added later
   // without a migration.
-  activeMode    String   @default("RIDE") // "RIDE" | "FOOD_ERRAND"
+  activeMode String @default("RIDE") // "RIDE" | "FOOD_ERRAND"
 
   // ------------------------------------------------- dispatch reputation ---
   // Counters the matcher scores on. Denormalised deliberately: scoring runs
@@ -442,8 +442,8 @@ model DriverProfile {
   lastOfferAt     DateTime?
   lastCompletedAt DateTime?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // findNearbyDriversForMode (location.service.ts) filters DriverProfile by
   // exactly these two columns after the Redis geo lookup narrows candidates
@@ -453,10 +453,10 @@ model DriverProfile {
 }
 
 enum TripStatus {
-  REQUESTED     // rider submitted the request, no driver matched yet
-  MATCHING      // a driver has been offered the trip, awaiting accept/decline
-  MATCHED       // driver accepted, en route to pickup
-  IN_PROGRESS   // passenger/parcel picked up, trip underway
+  REQUESTED // rider submitted the request, no driver matched yet
+  MATCHING // a driver has been offered the trip, awaiting accept/decline
+  MATCHED // driver accepted, en route to pickup
+  IN_PROGRESS // passenger/parcel picked up, trip underway
   COMPLETED
   CANCELLED
 }
@@ -473,20 +473,20 @@ enum VehicleType {
 }
 
 model Trip {
-  id          String     @id @default(uuid())
-  riderId     String
-  rider       User       @relation("RiderTrips", fields: [riderId], references: [id])
-  driverId    String?
-  driver      User?      @relation("DriverTrips", fields: [driverId], references: [id])
+  id       String  @id @default(uuid())
+  riderId  String
+  rider    User    @relation("RiderTrips", fields: [riderId], references: [id])
+  driverId String?
+  driver   User?   @relation("DriverTrips", fields: [driverId], references: [id])
 
-  status      TripStatus @default(REQUESTED)
+  status      TripStatus  @default(REQUESTED)
   vehicleType VehicleType
-  fareType    FareType   @default(FIXED)
+  fareType    FareType    @default(FIXED)
 
-  pickupLat   Float
-  pickupLng   Float
-  dropoffLat  Float
-  dropoffLng  Float
+  pickupLat    Float
+  pickupLng    Float
+  dropoffLat   Float
+  dropoffLng   Float
   // The addresses as the customer saw them. Only coordinates were stored,
   // which means a completed trip could never answer "where did I go?" — the
   // exact question behind "what was that Rs 340 on Tuesday". Delivery and
@@ -494,17 +494,17 @@ model Trip {
   pickupLabel  String?
   dropoffLabel String?
 
-  distanceKm  Float?
+  distanceKm           Float?
   // Was this fare based on a real road route, or a straight-line estimate
   // because routing was unavailable? Recorded per trip so a fare dispute can
   // be answered with evidence rather than a guess, and so you can see how
   // often the routing host is failing you.
-  distanceSource String? // "ROUTED" | "ESTIMATED"
+  distanceSource       String? // "ROUTED" | "ESTIMATED"
   // What the customer told their rider about finding them. Karachi pickups
   // are described, not addressed — this is often the difference between a
   // 30-second pickup and a phone call.
-  pickupNote      String?
-  pickupNoteAudioUrl String?
+  pickupNote           String?
+  pickupNoteAudioUrl   String?
   // GPS accuracy of the pickup in metres at booking time. A pickup complaint
   // ("nobody came to my door") is a completely different investigation at
   // ±15m than at ±800m, and without this you can't tell them apart.
@@ -513,8 +513,8 @@ model Trip {
   // represent PKR amounts exactly (0.1 + 0.2 !== 0.3), and that drift
   // compounds across ledger entries. Decimal(10,2) is exact and still plain
   // JS numbers in and out at every call site (Number(trip.fare) on read).
-  fare        Decimal?   @db.Decimal(10, 2) // final agreed fare (PKR)
-  offeredFare Decimal?   @db.Decimal(10, 2) // rider's bid, when fareType = BID
+  fare                 Decimal? @db.Decimal(10, 2) // final agreed fare (PKR)
+  offeredFare          Decimal? @db.Decimal(10, 2) // rider's bid, when fareType = BID
   // "Fast Match" tip — an optional amount the customer adds at booking to make
   // the job more attractive, shown to the driver in the offer.
   //
@@ -523,7 +523,7 @@ model Trip {
   // a tip (see commission.util.ts). Merging them would quietly bill the driver
   // 15% of money the customer specifically meant for them, which is the exact
   // behaviour that makes riders stop trusting a tipping feature.
-  tipAmount   Decimal?   @db.Decimal(10, 2)
+  tipAmount            Decimal? @db.Decimal(10, 2)
 
   // ---------------------------------------------------------- fare audit ---
   // WHY FOUR FARE COLUMNS INSTEAD OF ONE
@@ -579,30 +579,30 @@ model Trip {
   // What the customer was actually charged for cancelling, if anything.
   // Stored even when zero so a dispute can show the policy that applied
   // rather than us reconstructing it from timestamps months later.
-  cancellationFee Decimal?  @db.Decimal(10, 2)
+  cancellationFee Decimal? @db.Decimal(10, 2)
 
-  isTest         Boolean   @default(false)
+  isTest Boolean @default(false)
 
-  offerCount     Int       @default(0)
+  offerCount      Int       @default(0)
   // Matching exhausted every radius and found nobody at all.
   noDriverFoundAt DateTime?
   // Crossed the soft threshold — ops should look.
-  opsAlertedAt   DateTime?
+  opsAlertedAt    DateTime?
   // Crossed the hard threshold — ops must place this by hand.
-  opsEscalatedAt DateTime?
+  opsEscalatedAt  DateTime?
 
-  requestedAt DateTime   @default(now())
-  matchedAt   DateTime?
-  startedAt   DateTime?
-  completedAt DateTime?
-  cancelledAt DateTime?
+  requestedAt  DateTime  @default(now())
+  matchedAt    DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
   // WHO cancelled and WHY. Without these a cancellation is a status change
   // and nothing more — you cannot tell a rider gaming the system from a
   // customer who mis-pinned their pickup, which is the single most useful
   // signal in the first weeks of a pilot (see LAUNCH.md, week-one watchlist).
-  cancelledBy     String?  // "RIDER" | "DRIVER"
-  cancelReason    String?  // one of the fixed codes in cancel-trip.dto.ts
-  cancelNote      String?  // optional free text
+  cancelledBy  String? // "RIDER" | "DRIVER"
+  cancelReason String? // one of the fixed codes in cancel-trip.dto.ts
+  cancelNote   String? // optional free text
 
   // "Share my ride" — an unguessable token that lets someone WITHOUT an
   // account watch this trip's progress (the safety feature every ride app
@@ -610,10 +610,11 @@ model Trip {
   // get a live public surface. Reading via this token exposes a deliberately
   // minimal projection (see trips.service.getSharedTrip) — status, driver
   // first name, vehicle, coarse position — never phone numbers or fare.
-  shareToken  String?    @unique
+  shareToken String? @unique
 
   ledgerEntries LedgerEntry[]
   rating        Rating?
+  events        TripEvent[]
 
   @@index([riderId])
   @@index([driverId])
@@ -623,8 +624,6 @@ model Trip {
   // screens — both filter status alongside a second column, which a
   // single-column index on status alone doesn't serve well.
   @@index([status, vehicleType])
-  events      TripEvent[]
-
   @@index([driverId, status])
   // Serve the ops desk's "nothing is moving" queries — both are polled
   // continuously while the desk is open.
@@ -644,34 +643,40 @@ enum DeliveryStatus {
 }
 
 model Delivery {
-  id             String         @id @default(uuid())
-  senderId       String
-  sender         User           @relation("SenderDeliveries", fields: [senderId], references: [id])
-  driverId       String?
-  driver         User?          @relation("DriverDeliveries", fields: [driverId], references: [id])
+  id       String  @id @default(uuid())
+  senderId String
+  sender   User    @relation("SenderDeliveries", fields: [senderId], references: [id])
+  driverId String?
+  driver   User?   @relation("DriverDeliveries", fields: [driverId], references: [id])
 
-  status         DeliveryStatus @default(REQUESTED)
+  status DeliveryStatus @default(REQUESTED)
 
-  pickupLat      Float
-  pickupLng      Float
-  dropoffLat     Float
-  dropoffLng     Float
+  pickupLat  Float
+  pickupLng  Float
+  dropoffLat Float
+  dropoffLng Float
+
+  // What the sender actually typed, not just coordinates. Without these the
+  // driver's job screen could only ever say "Pickup point" — they had the
+  // latitude and longitude of a doorway and no way to know whose it was.
+  pickupLabel  String?
+  dropoffLabel String?
 
   recipientName  String
   recipientPhone String
   parcelNote     String?
 
-  codAmount      Decimal? @db.Decimal(10, 2) // cash the driver collects from the recipient on the sender's behalf; null = no COD
-  fare           Decimal? @db.Decimal(10, 2) // delivery fee charged to the sender
-  distanceKm     Float?
+  codAmount  Decimal? @db.Decimal(10, 2) // cash the driver collects from the recipient on the sender's behalf; null = no COD
+  fare       Decimal? @db.Decimal(10, 2) // delivery fee charged to the sender
+  distanceKm Float?
 
   proofOfDeliveryUrl String? // Cloudflare R2 object URL — set from the Uploads module's presigned-upload flow
 
-  requestedAt    DateTime  @default(now())
-  matchedAt      DateTime?
-  pickedUpAt     DateTime?
-  deliveredAt    DateTime?
-  cancelledAt    DateTime?
+  requestedAt DateTime  @default(now())
+  matchedAt   DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
 
   ledgerEntries LedgerEntry[]
   rating        Rating?
@@ -687,7 +692,7 @@ enum LedgerEntryType {
   DELIVERY_PAYOUT
   DELIVERY_COD_LIABILITY // cash the driver is now holding on the platform's behalf, owed back
   WALLET_TOPUP // rider (or driver) adding funds to their in-app balance
-  FOOD_ORDER_DRIVER_PAYOUT   // delivery fee owed to the driver for a food order
+  FOOD_ORDER_DRIVER_PAYOUT // delivery fee owed to the driver for a food order
   FOOD_ORDER_RESTAURANT_PAYOUT // items total minus platform commission, owed to the restaurant
   ERRAND_PAYOUT // service fee owed to the driver for a buy-for-me errand
   TRIP_TIP // "Fast Match" tip, passed to the driver in full — no commission
@@ -701,28 +706,27 @@ enum LedgerEntryType {
 // "what do we owe this driver right now" without inventing a fictitious
 // system account. Revisit if/when a real accounting requirement shows up.
 model LedgerEntry {
-  id               String          @id @default(uuid())
-  userId           String
-  user             User            @relation(fields: [userId], references: [id])
-  type             LedgerEntryType
+  id     String          @id @default(uuid())
+  userId String
+  user   User            @relation(fields: [userId], references: [id])
+  type   LedgerEntryType
 
-  grossAmount      Decimal         @db.Decimal(10, 2) // full fare/delivery fee before commission
-  commissionRate   Float?          // a ratio (0-1), not currency — Float is fine here, no precision-drift risk
-  commissionAmount Decimal?        @db.Decimal(10, 2)
-  netAmount        Decimal         @db.Decimal(10, 2) // signed: positive = owed to the driver, negative = driver owes the platform
+  grossAmount      Decimal  @db.Decimal(10, 2) // full fare/delivery fee before commission
+  commissionRate   Float? // a ratio (0-1), not currency — Float is fine here, no precision-drift risk
+  commissionAmount Decimal? @db.Decimal(10, 2)
+  netAmount        Decimal  @db.Decimal(10, 2) // signed: positive = owed to the driver, negative = driver owes the platform
 
-  tripId           String?
-  trip             Trip?           @relation(fields: [tripId], references: [id])
-  deliveryId       String?
-  delivery         Delivery?       @relation(fields: [deliveryId], references: [id])
-  foodOrderId      String?
-  foodOrder        FoodOrder?      @relation(fields: [foodOrderId], references: [id])
-  errandId         String?
-  errand           Errand?         @relation(fields: [errandId], references: [id])
+  tripId      String?
+  trip        Trip?      @relation(fields: [tripId], references: [id])
+  deliveryId  String?
+  delivery    Delivery?  @relation(fields: [deliveryId], references: [id])
+  foodOrderId String?
+  foodOrder   FoodOrder? @relation(fields: [foodOrderId], references: [id])
+  errandId    String?
+  errand      Errand?    @relation(fields: [errandId], references: [id])
 
-  createdAt        DateTime        @default(now())
+  createdAt DateTime @default(now())
 
-  @@index([userId])
   // Database-level backstop against double-paying one job. The services'
   // conditional status transitions (updateMany ... where status = <prior>)
   // are the primary guard; these make a duplicate physically impossible even
@@ -733,27 +737,28 @@ model LedgerEntry {
   @@unique([deliveryId, type], name: "uniq_delivery_payout")
   @@unique([foodOrderId, type], name: "uniq_food_order_payout")
   @@unique([errandId, type], name: "uniq_errand_payout")
+  @@index([userId])
   @@map("ledger_entries")
 }
 
 model Rating {
-  id         String    @id @default(uuid())
-  tripId     String?   @unique
-  trip       Trip?     @relation(fields: [tripId], references: [id])
-  deliveryId String?   @unique
-  delivery   Delivery? @relation(fields: [deliveryId], references: [id])
-  foodOrderId String?  @unique
+  id          String     @id @default(uuid())
+  tripId      String?    @unique
+  trip        Trip?      @relation(fields: [tripId], references: [id])
+  deliveryId  String?    @unique
+  delivery    Delivery?  @relation(fields: [deliveryId], references: [id])
+  foodOrderId String?    @unique
   foodOrder   FoodOrder? @relation(fields: [foodOrderId], references: [id])
 
-  raterId    String
-  rater      User      @relation("RatingsGiven", fields: [raterId], references: [id])
-  rateeId    String
-  ratee      User      @relation("RatingsReceived", fields: [rateeId], references: [id])
+  raterId String
+  rater   User   @relation("RatingsGiven", fields: [raterId], references: [id])
+  rateeId String
+  ratee   User   @relation("RatingsReceived", fields: [rateeId], references: [id])
 
-  score      Int       // 1-5
-  comment    String?
+  score   Int // 1-5
+  comment String?
 
-  createdAt  DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([rateeId])
   @@map("ratings")
@@ -796,39 +801,39 @@ model RefreshToken {
 // ============================================================================
 
 enum RestaurantStatus {
-  PENDING   // submitted by owner, awaiting admin approval
+  PENDING // submitted by owner, awaiting admin approval
   APPROVED
   SUSPENDED
 }
 
 // One row per restaurant storefront. Owner is a User with role = RESTAURANT.
 model Restaurant {
-  id             String           @id @default(uuid())
-  ownerId        String           @unique
-  owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id      String @id @default(uuid())
+  ownerId String @unique
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
-  name           String
-  description    String?
-  logoUrl        String?          // Cloudflare R2 object URL
-  bannerUrl      String?          // Cloudflare R2 object URL
-  address        String
-  lat            Float
-  lng            Float
-  cuisineTags    String[]         @default([])
+  name        String
+  description String?
+  logoUrl     String? // Cloudflare R2 object URL
+  bannerUrl   String? // Cloudflare R2 object URL
+  address     String
+  lat         Float
+  lng         Float
+  cuisineTags String[] @default([])
 
   status         RestaurantStatus @default(PENDING)
   isOpen         Boolean          @default(false) // owner-controlled "accepting orders" toggle
-  commissionRate Float            @default(0.20)  // platform cut of itemsTotal
+  commissionRate Float            @default(0.20) // platform cut of itemsTotal
   rating         Float            @default(5.0)
 
   // --- Ops settings ---
   // Kitchen's own estimate, shown to customers as part of the delivery ETA
   // and adjustable per-order when they accept (a biryani order is not a
   // 10-minute job). Drives the "arrives in ~X min" the customer sees.
-  prepTimeMinutes Int    @default(20)
+  prepTimeMinutes     Int     @default(20)
   // Someone has to be reachable when an order is missed — this is the number
   // ops actually calls, which may not be the account's login phone.
-  notifyPhone     String?
+  notifyPhone         String?
   // Payout destination for the restaurant's share. Same as the driver's:
   // a destination ops pays out to, never a stored payment credential.
   payoutMethod        String?
@@ -840,24 +845,24 @@ model Restaurant {
   // Who ops speaks to. The account phone is a login credential; this is a
   // human being with a name, which matters when a kitchen goes silent
   // mid-dinner-rush and someone has to be called.
-  ownerName       String?
-  ownerPhone      String?
+  ownerName        String?
+  ownerPhone       String?
   // Weekly hours as { mon: { open: "11:00", close: "23:00", closed: false }, ... }.
   // JSON rather than 14 columns because kitchens change these constantly and
   // splitting/rejoining them per day buys nothing.
-  openingHours    Json?
+  openingHours     Json?
   // How far this kitchen is willing to send food, in km. Beyond it we simply
   // don't show the storefront — better than accepting an order the rider
   // can't deliver hot.
-  deliveryRadiusKm Float  @default(5)
+  deliveryRadiusKm Float   @default(5)
   // Minimum basket. Kitchens use this to make small orders worth cooking.
-  minOrderValue    Float  @default(0)
+  minOrderValue    Float   @default(0)
 
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  menuItems      MenuItem[]
-  foodOrders     FoodOrder[]
+  menuItems  MenuItem[]
+  foodOrders FoodOrder[]
 
   @@map("restaurants")
 }
@@ -867,60 +872,60 @@ model MenuItem {
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
-  name         String
-  description  String?
-  price        Decimal    @db.Decimal(10, 2)
-  imageUrl     String?
-  category     String     @default("Menu")
-  isAvailable  Boolean    @default(true)
+  name        String
+  description String?
+  price       Decimal @db.Decimal(10, 2)
+  imageUrl    String?
+  category    String  @default("Menu")
+  isAvailable Boolean @default(true)
 
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  orderItems   FoodOrderItem[]
+  orderItems FoodOrderItem[]
 
   @@index([restaurantId])
   @@map("menu_items")
 }
 
 enum FoodOrderStatus {
-  PLACED     // customer submitted, awaiting restaurant accept
-  ACCEPTED   // restaurant accepted, preparing
-  READY      // food ready, no driver assigned yet
-  MATCHING   // system is actively offering to nearby FOOD_ERRAND-mode drivers
-  ASSIGNED   // a driver accepted the offer, en route to the restaurant
-  PICKED_UP  // driver has the order, en route to customer
+  PLACED // customer submitted, awaiting restaurant accept
+  ACCEPTED // restaurant accepted, preparing
+  READY // food ready, no driver assigned yet
+  MATCHING // system is actively offering to nearby FOOD_ERRAND-mode drivers
+  ASSIGNED // a driver accepted the offer, en route to the restaurant
+  PICKED_UP // driver has the order, en route to customer
   DELIVERED
   CANCELLED
 }
 
 model FoodOrder {
-  id           String          @id @default(uuid())
+  id           String     @id @default(uuid())
   customerId   String
-  customer     User            @relation("FoodOrdersAsCustomer", fields: [customerId], references: [id])
+  customer     User       @relation("FoodOrdersAsCustomer", fields: [customerId], references: [id])
   restaurantId String
-  restaurant   Restaurant      @relation(fields: [restaurantId], references: [id])
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   driverId     String?
-  driver       User?           @relation("FoodOrdersAsDriver", fields: [driverId], references: [id])
+  driver       User?      @relation("FoodOrdersAsDriver", fields: [driverId], references: [id])
 
-  status       FoodOrderStatus @default(PLACED)
-  items        FoodOrderItem[]
+  status FoodOrderStatus @default(PLACED)
+  items  FoodOrderItem[]
 
   dropoffLabel String
   dropoffLat   Float
   dropoffLng   Float
   notes        String?
 
-  itemsTotal   Decimal         @db.Decimal(10, 2)
-  deliveryFee  Decimal         @db.Decimal(10, 2)
-  total        Decimal         @db.Decimal(10, 2)
+  itemsTotal  Decimal @db.Decimal(10, 2)
+  deliveryFee Decimal @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
 
-  placedAt     DateTime        @default(now())
-  acceptedAt   DateTime?
-  readyAt      DateTime?
-  pickedUpAt   DateTime?
-  deliveredAt  DateTime?
-  cancelledAt  DateTime?
+  placedAt    DateTime  @default(now())
+  acceptedAt  DateTime?
+  readyAt     DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
 
   ledgerEntries LedgerEntry[]
   rating        Rating?
@@ -939,11 +944,11 @@ model FoodOrder {
 // Line items snapshot name/price at order time so later menu edits don't
 // silently rewrite historical orders.
 model FoodOrderItem {
-  id            String    @id @default(uuid())
-  foodOrderId   String
-  foodOrder     FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
-  menuItemId    String
-  menuItem      MenuItem  @relation(fields: [menuItemId], references: [id])
+  id          String    @id @default(uuid())
+  foodOrderId String
+  foodOrder   FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
+  menuItemId  String
+  menuItem    MenuItem  @relation(fields: [menuItemId], references: [id])
 
   nameSnapshot  String
   priceSnapshot Decimal @db.Decimal(10, 2)
@@ -967,32 +972,32 @@ enum ErrandStatus {
 // "Pick & Deliver to Me" — buy-for-me errand. Requester describes what they
 // need and a budget; a FOOD_ERRAND-mode driver accepts, shops, and delivers.
 model Errand {
-  id               String       @id @default(uuid())
-  requesterId      String
-  requester        User         @relation("ErrandsAsRequester", fields: [requesterId], references: [id])
-  driverId         String?
-  driver           User?        @relation("ErrandsAsDriver", fields: [driverId], references: [id])
+  id          String  @id @default(uuid())
+  requesterId String
+  requester   User    @relation("ErrandsAsRequester", fields: [requesterId], references: [id])
+  driverId    String?
+  driver      User?   @relation("ErrandsAsDriver", fields: [driverId], references: [id])
 
-  status           ErrandStatus @default(REQUESTED)
+  status ErrandStatus @default(REQUESTED)
 
-  storeLabel       String
-  storeLat         Float
-  storeLng         Float
-  dropoffLabel     String
-  dropoffLat       Float
-  dropoffLng       Float
+  storeLabel   String
+  storeLat     Float
+  storeLng     Float
+  dropoffLabel String
+  dropoffLat   Float
+  dropoffLng   Float
 
-  itemsDescription String       // free-text shopping list
-  estimatedBudget  Decimal      @db.Decimal(10, 2)
-  actualSpend      Decimal?     @db.Decimal(10, 2)
-  serviceFee       Decimal      @db.Decimal(10, 2)
+  itemsDescription String // free-text shopping list
+  estimatedBudget  Decimal  @db.Decimal(10, 2)
+  actualSpend      Decimal? @db.Decimal(10, 2)
+  serviceFee       Decimal  @db.Decimal(10, 2)
 
-  requestedAt      DateTime     @default(now())
-  acceptedAt       DateTime?
-  deliveredAt      DateTime?
-  cancelledAt      DateTime?
+  requestedAt DateTime  @default(now())
+  acceptedAt  DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
 
-  ledgerEntries    LedgerEntry[]
+  ledgerEntries LedgerEntry[]
 
   @@index([requesterId])
   @@index([driverId])

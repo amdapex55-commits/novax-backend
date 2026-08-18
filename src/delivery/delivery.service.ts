@@ -43,6 +43,8 @@ export class DeliveryService {
         pickupLng: dto.pickupLng,
         dropoffLat: dto.dropoffLat,
         dropoffLng: dto.dropoffLng,
+        pickupLabel: dto.pickupLabel,
+        dropoffLabel: dto.dropoffLabel,
         recipientName: dto.recipientName,
         recipientPhone: dto.recipientPhone,
         parcelNote: dto.parcelNote,
@@ -98,6 +100,8 @@ export class DeliveryService {
       distanceKm: delivery.distanceKm,
       recipientName: delivery.recipientName,
       parcelNote: delivery.parcelNote,
+      pickupLabel: delivery.pickupLabel,
+      dropoffLabel: delivery.dropoffLabel,
       pickupLat: delivery.pickupLat,
       pickupLng: delivery.pickupLng,
       dropoffLat: delivery.dropoffLat,
@@ -240,7 +244,19 @@ export class DeliveryService {
   }
 
   private async getDeliveryOr404(deliveryId: string) {
-    const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId } });
+    /* THE DRIVER COULD NOT PHONE THE PERSON HANDING OVER THE PARCEL.
+       This returned the bare row, so the driver's job screen had a recipient
+       name and number for the drop-off and nothing at all for the pickup —
+       no name, no number. A parcel has two people; a ride has one, and this
+       was written as though it had one. Only fields the counterparty may
+       see: no CNIC, no payout details. */
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      include: {
+        sender: { select: { name: true, phone: true, rating: true } },
+        driver: { select: { name: true, phone: true, rating: true } },
+      },
+    });
     if (!delivery) throw new NotFoundException("Delivery not found");
     return delivery;
   }

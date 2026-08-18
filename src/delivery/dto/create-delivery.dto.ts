@@ -18,6 +18,21 @@ export class CreateDeliveryDto {
   @IsLongitude()
   dropoffLng: number;
 
+  /* The addresses as the sender wrote them. Optional because a pin dropped on
+     a map has no name, but sent whenever the sender picked a place — without
+     them the driver's job screen can only say "Pickup point". */
+  @ApiPropertyOptional({ example: "Tariq Road, Karachi" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  pickupLabel?: string;
+
+  @ApiPropertyOptional({ example: "DHA Phase 5, Karachi" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dropoffLabel?: string;
+
   @ApiProperty({ example: "Ayesha Malik" })
   @IsString()
   @MaxLength(80)
