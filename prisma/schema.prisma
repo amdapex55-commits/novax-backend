@@ -704,6 +704,13 @@ enum LedgerEntryType {
   FOOD_ORDER_RESTAURANT_PAYOUT // items total minus platform commission, owed to the restaurant
   ERRAND_PAYOUT // service fee owed to the driver for a buy-for-me errand
   TRIP_TIP // "Fast Match" tip, passed to the driver in full — no commission
+  // The fare the driver took IN CASH at the kerb. Negative, because that money
+  // is the platform's until commission is settled — exactly the shape
+  // DELIVERY_COD_LIABILITY already uses for parcels. Without it a completed
+  // trip only ever CREDITED the driver, for money they were physically
+  // holding, so a balance could never go negative and the credit limit could
+  // never fire.
+  TRIP_CASH_COLLECTED
   PARCEL_COD_CREDIT // COD cash owed to the SENDER, credited the moment the recipient pays
   WALLET_WITHDRAWAL // sender/client cashing out their COD balance to a bank or mobile wallet
 }

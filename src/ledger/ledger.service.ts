@@ -30,7 +30,39 @@ export class LedgerService {
       },
     });
 
-    if (!(tip > 0)) return payout;
+    /* THE CASH THE DRIVER IS HOLDING.
+
+       The passenger paid at the kerb, so the driver already has the full
+       gross in their pocket. Writing only a positive TRIP_PAYOUT credited
+       them a second time, on our books, for money we never sent — and left
+       nothing recording the commission they owe.
+
+       The result was a balance that could only ever rise: a driver's wallet
+       never went negative, the credit limit that is supposed to stop
+       dispatching to someone Rs 2,000 behind could never fire, and the ops
+       settlement screen had nothing to settle.
+
+       Two entries, so both questions stay answerable:
+         TRIP_PAYOUT         +net    what they EARNED — the earnings screen
+         TRIP_CASH_COLLECTED -gross  what they TOOK   — the wallet balance
+       Balance is the sum of everything, so it lands on exactly the
+       commission owed. Earnings sums only PAYOUT_TYPES, so it is untouched. */
+    const cashHeld = this.prisma.ledgerEntry.create({
+      data: {
+        userId: driverId,
+        type: "TRIP_CASH_COLLECTED",
+        tripId,
+        grossAmount: split.grossAmount,
+        commissionRate: 0,
+        commissionAmount: 0,
+        netAmount: -Number(split.grossAmount),
+      },
+    });
+
+    if (!(tip > 0)) {
+      const [entry] = await this.prisma.$transaction([payout, cashHeld]);
+      return entry;
+    }
 
     // The tip is its own entry with commissionRate 0 and net === gross. Two
     // reasons it isn't just added to the payout's netAmount: the driver can
@@ -41,6 +73,7 @@ export class LedgerService {
     // together — same reasoning as recordDeliveryPayout below.
     const [entry] = await this.prisma.$transaction([
       payout,
+      cashHeld,
       this.prisma.ledgerEntry.create({
         data: {
           userId: driverId,
