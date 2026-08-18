@@ -1,4 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RedisService } from "../redis/redis.service";
 
@@ -66,10 +71,62 @@ export class TokenDenylistService {
 
   async isRevoked(userId: string): Promise<boolean> {
     try {
-      return (await this.redis.client.exists(KEY(userId))) === 1;
+      const revoked = (await this.redis.client.exists(KEY(userId))) === 1;
+      this.degraded = false;
+      return revoked;
     } catch (err) {
+      this.degraded = true;
       this.logger.error(`Redis unreachable checking revocation for ${userId} — allowing the request: ${err}`);
       return false;
+    }
+  }
+
+  /* TWO LEVELS OF CERTAINTY, NOT ONE.
+
+     Failing open is the right call for ordinary traffic: failing closed would
+     sign out every driver on the platform the moment Redis blinked, which is
+     a far larger incident than one revoked session on a device the person is
+     already holding.
+
+     But "allow everything" is the wrong answer for the operations that
+     revocation actually exists to stop. A suspended driver browsing their
+     earnings during a Redis outage is tolerable. That same driver withdrawing
+     money, changing their payout account, or an admin action running under a
+     revoked session, is not — those are exactly the things ops was trying to
+     halt when they suspended the account.
+
+     So sensitive routes ask this instead, and are refused while we cannot
+     tell. The blast radius is a short window in which a handful of
+     money-and-access operations are unavailable, against a Redis outage in
+     which everything else keeps working. */
+  private degraded = false;
+
+  /** True when Redis last failed us, so revocation status is unknown. */
+  isDegraded(): boolean {
+    return this.degraded;
+  }
+
+  /**
+   * Revocation check for operations that move money or change access.
+   * Throws rather than returning a boolean, because every caller's correct
+   * response to "we cannot tell" is identical: refuse.
+   */
+  async assertNotRevokedForSensitiveAction(userId: string, action: string): Promise<void> {
+    let revoked: boolean;
+    try {
+      revoked = (await this.redis.client.exists(KEY(userId))) === 1;
+      this.degraded = false;
+    } catch (err) {
+      this.degraded = true;
+      this.logger.error(
+        `Redis unreachable checking revocation for ${userId} — REFUSING sensitive action "${action}": ${err}`,
+      );
+      throw new ServiceUnavailableException(
+        "We can't verify your session right now. Please try again in a few minutes.",
+      );
+    }
+    if (revoked) {
+      throw new UnauthorizedException("This session is no longer valid. Please sign in again.");
     }
   }
 }

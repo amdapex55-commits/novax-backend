@@ -136,11 +136,14 @@ export class FoodOrdersService {
     const excluded = await this.excludedDriversStore.getAll("foodOrder", orderId);
 
     for (const radius of SEARCH_RADII_KM) {
+      /* Segregation ran for trips only — see the note in delivery.service.ts.
+         A review-fleet food order was being dispatched to real drivers. */
       const nearby = await this.locationService.findNearbyDriversForMode(
         order.restaurant.lat,
         order.restaurant.lng,
         radius,
         "FOOD_ERRAND",
+        await this.isTestFleetJob(order.customerId),
       );
       const candidate = nearby.find((d) => !excluded.has(d.driverId));
       if (candidate) {
@@ -149,6 +152,12 @@ export class FoodOrdersService {
       }
     }
     this.logger.warn(`No available FOOD_ERRAND drivers found for food order ${orderId}`);
+  }
+
+  /** Whose fleet this job belongs to, read from the customer's account. */
+  private async isTestFleetJob(ownerId: string): Promise<boolean> {
+    const u = await this.prisma.user.findUnique({ where: { id: ownerId }, select: { isTestAccount: true } });
+    return u?.isTestAccount === true;
   }
 
   private async offerToDriver(orderId: string, driverId: string) {

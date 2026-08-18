@@ -68,7 +68,16 @@ export class DeliveryService {
     const excluded = await this.excludedDriversStore.getAll("delivery", deliveryId);
 
     for (const radius of SEARCH_RADII_KM) {
-      const nearby = await this.locationService.findNearbyDrivers(delivery.pickupLat, delivery.pickupLng, radius);
+    /* SEGREGATION RAN FOR TRIPS ONLY.
+       findNearbyDrivers takes a wantTestFleet flag and matches it exactly in
+       both directions, but only trips ever passed it — deliveries, food
+       orders and errands all fell through to the default of `false`. So a
+       store reviewer's simulated parcel or food order was dispatched to a
+       real driver on a real bike in Karachi, which is precisely the outcome
+       the review fleet exists to prevent. The owner's account is the
+       authority, the same source the trip's own isTest is stamped from. */
+      const nearby = await this.locationService.findNearbyDrivers(
+        delivery.pickupLat, delivery.pickupLng, radius, await this.isTestFleetJob(delivery.senderId));
       const candidate = nearby.find((d) => !excluded.has(d.driverId));
       if (candidate) {
         await this.offerToDriver(deliveryId, candidate.driverId);
@@ -77,6 +86,12 @@ export class DeliveryService {
     }
 
     this.logger.warn(`No available drivers found for delivery ${deliveryId}`);
+  }
+
+  /** Whose fleet this job belongs to, read from the requester's account. */
+  private async isTestFleetJob(ownerId: string): Promise<boolean> {
+    const u = await this.prisma.user.findUnique({ where: { id: ownerId }, select: { isTestAccount: true } });
+    return u?.isTestAccount === true;
   }
 
   private async offerToDriver(deliveryId: string, driverId: string) {

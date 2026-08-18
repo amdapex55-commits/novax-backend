@@ -10,6 +10,7 @@ import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
 import { SetModeDto } from "./dto/set-mode.dto";
 import { DriverOnboardingDto, AdminDriverReviewDto } from "./dto/driver-onboarding.dto";
 import { RejectKycDto } from "./dto/reject-kyc.dto";
+import { SensitiveAction } from "../auth/sensitive-action.decorator";
 
 @ApiTags("users")
 @ApiBearerAuth()
@@ -64,6 +65,8 @@ export class UsersController {
     return this.usersService.getOnboardingStatus(user.userId);
   }
 
+  // Carries payoutMethod/payoutAccountNumber — where a driver's money goes.
+  @SensitiveAction("driver-payout-details")
   @Patch("me/onboarding")
   @Roles("DRIVER")
   @ApiOperation({ summary: "Save onboarding details (partial saves allowed)" })

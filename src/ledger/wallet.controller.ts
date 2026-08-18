@@ -7,6 +7,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { LedgerService } from "./ledger.service";
 import { TopUpDto } from "./dto/top-up.dto";
 import { WithdrawDto } from "./dto/withdraw.dto";
+import { SensitiveAction } from "../auth/sensitive-action.decorator";
 
 @ApiTags("wallet")
 @ApiBearerAuth()
@@ -42,6 +43,7 @@ export class WalletController {
   // Cash out a COD balance. The sender's own money, so no admin role — but
   // the amount is checked against their real balance server-side, because a
   // client-supplied amount is a request, not a fact.
+  @SensitiveAction("wallet-withdraw")
   @Post("withdraw")
   @ApiOperation({ summary: "Withdraw a positive wallet balance to JazzCash, Easypaisa or a bank" })
   withdraw(@CurrentUser() user: { userId: string }, @Body() dto: WithdrawDto) {

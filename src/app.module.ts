@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "nestjs-throttler-storage-redis";
 import { APP_GUARD } from "@nestjs/core";
+import { SensitiveActionGuard } from "./auth/guards/sensitive-action.guard";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { RedisService } from "./redis/redis.service";
@@ -87,6 +88,10 @@ import { SafetyModule } from "./safety/safety.module";
     // Global so a parked service can't come back online just because
     // someone forgot to add a guard to a new controller.
     { provide: APP_GUARD, useClass: ServiceEnabledGuard },
+    // Global for the same reason: a new withdrawal or admin route must not be
+    // able to ship without the fail-closed revocation check. Routes that are
+    // not marked @SensitiveAction pass straight through.
+    { provide: APP_GUARD, useClass: SensitiveActionGuard },
   ],
 })
 export class AppModule {}

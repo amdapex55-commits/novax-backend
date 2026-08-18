@@ -1,9 +1,22 @@
-import { Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 import { UploadPurpose } from "./dto/presign-upload.dto";
+
+/* Purposes whose objects are somebody's identity and must never be reachable
+   without an authorisation check. */
+const PRIVATE_PURPOSES = new Set<string>(["kyc-doc", "proof-of-delivery"]);
+
+/** How long a signed read of a private document stays usable. */
+const VIEW_TTL_SECONDS = 120;
 
 const PRESIGN_TTL_SECONDS = 300; // 5 minutes to actually perform the PUT
 
@@ -113,8 +126,68 @@ export class UploadsService {
     // row once the client confirms the PUT succeeded. R2 buckets need a public
     // access domain or custom domain configured for this to actually resolve;
     // until then this is still useful as the canonical key to store.
-    const publicUrl = this.publicUrlBase ? `${this.publicUrlBase}/${key}` : key;
+    /* IDENTITY DOCUMENTS DO NOT GET A PUBLIC URL.
 
-    return { uploadUrl, publicUrl, key, expiresInSeconds: PRESIGN_TTL_SECONDS };
+       A CNIC, a driving licence and a photo of someone's bike outside their
+       house were being stored as `https://pub-….r2.dev/kyc-doc/…` — readable
+       by anyone holding the link, with no authentication at all. The UUID
+       path makes them impractical to guess, but that is obscurity, not
+       access control, and the links are not secret: they sit in the database,
+       get rendered in the ops console, and travel through browser history,
+       screenshots and support threads.
+
+       So for KYC the stored value is the OBJECT KEY, and reading it goes
+       through GET /uploads/view/:key, which checks who is asking before
+       minting a short-lived signed URL. Everything else — menu photos, shop
+       banners, profile pictures — is genuinely public content and keeps its
+       direct URL, because proxying those would cost latency for nothing.
+
+       Existing rows still hold absolute pub-….r2.dev URLs. signedViewUrl()
+       accepts both shapes so the ops console keeps working while old
+       documents age out. */
+    const isPrivate = PRIVATE_PURPOSES.has(purpose);
+    const publicUrl = isPrivate
+      ? key
+      : this.publicUrlBase
+        ? `${this.publicUrlBase}/${key}`
+        : key;
+
+    return { uploadUrl, publicUrl, key, isPrivate, expiresInSeconds: PRESIGN_TTL_SECONDS };
+  }
+
+  /**
+   * A short-lived signed GET for a private object.
+   *
+   * Accepts either a bare object key or a legacy absolute pub-….r2.dev URL,
+   * because documents uploaded before this existed are stored as the latter
+   * and a reviewer still has to be able to open them.
+   *
+   * Two minutes: long enough to load an image in the ops console, short
+   * enough that a URL copied out of a network tab is useless by the time
+   * anyone acts on it.
+   */
+  async signedViewUrl(keyOrUrl: string): Promise<string> {
+    if (!this.s3) throw new ServiceUnavailableException("File storage is not configured.");
+
+    let key = keyOrUrl.trim();
+    if (/^https?:\/\//i.test(key)) {
+      // Legacy absolute URL — take the path, minus the leading slash.
+      try {
+        key = new URL(key).pathname.replace(/^\/+/, "");
+      } catch {
+        throw new BadRequestException("That document reference is not readable.");
+      }
+    }
+    // No traversal, no absolute paths, and it must live under a known purpose.
+    if (key.includes("..") || key.startsWith("/")) {
+      throw new BadRequestException("That document reference is not readable.");
+    }
+    if (![...PRIVATE_PURPOSES].some((p) => key.startsWith(`${p}/`))) {
+      throw new BadRequestException("That document reference is not readable.");
+    }
+
+    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: VIEW_TTL_SECONDS,
+    });
   }
 }

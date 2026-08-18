@@ -6,6 +6,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { AdminService } from "./admin.service";
+import { SensitiveAction } from "../auth/sensitive-action.decorator";
+import { Throttle } from "@nestjs/throttler";
 
 // Every route here requires ADMIN — driver KYC approval itself stays on
 // POST /users/:id/approve-kyc (already built, already @Roles("ADMIN")); this
@@ -35,6 +37,10 @@ export class AdminController {
   // POST, not GET: it mutates the account and returns a credential exactly
   // once. VERIFY WHO YOU ARE TALKING TO BEFORE CALLING THIS — it is a
   // complete account takeover if the person on the phone is not the owner.
+  // A compromised admin session should not be able to reset every password
+  // on the platform before anyone notices.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @SensitiveAction("admin-reset-password")
   @Post("users/:id/reset-password")
   @ApiOperation({ summary: "Set a temporary password and revoke live sessions" })
   resetUserPassword(@Param("id") id: string, @Body("requestId") requestId?: string) {
@@ -75,6 +81,7 @@ export class AdminController {
     return this.adminService.listAvailableDrivers();
   }
 
+  @SensitiveAction("admin-manual-assign")
   @Post("assign")
   @ApiOperation({ summary: "Assign a driver to a stuck job by hand (after phoning them)" })
   assign(@Body() dto: ManualAssignDto) {
@@ -109,12 +116,14 @@ export class AdminController {
 
   // --- Moderation ---
 
+  @SensitiveAction("admin-suspend")
   @Post("users/:id/suspend")
   @ApiOperation({ summary: "Suspend an account (forces drivers offline immediately)" })
   suspend(@Param("id") id: string, @Body() dto: SuspendUserDto) {
     return this.adminService.setUserActive(id, false, dto.reason);
   }
 
+  @SensitiveAction("admin-reactivate")
   @Post("users/:id/reactivate")
   @ApiOperation({ summary: "Reactivate a suspended account" })
   reactivate(@Param("id") id: string) {

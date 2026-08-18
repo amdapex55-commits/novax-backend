@@ -208,7 +208,7 @@ export class AdminService {
 
     // 9 bytes -> 12 base64url chars. Long enough not to be guessable, short
     // enough to read down a phone line without mistakes.
-    const tempPassword = randomBytes(9).toString("base64url");
+    const tempPassword = randomBytes(12).toString("base64url");
 
     await this.prisma.user.update({
       where: { id: userId },
@@ -547,14 +547,53 @@ export class AdminService {
    * the job is genuinely still unassigned, so a dispatcher can't stomp a
    * match that landed a second earlier.
    */
+  /** Which fleet a job belongs to. Only Trip stores `isTest` on the row; for
+   *  everything else the owner's account is the authority, which is the same
+   *  thing the trip's own flag was stamped from at creation. */
+  private async jobBelongsToTestFleet(
+    jobType: "TRIP" | "DELIVERY" | "FOOD_ORDER" | "ERRAND",
+    jobId: string,
+  ): Promise<boolean> {
+    if (jobType === "TRIP") {
+      const t = await this.prisma.trip.findUnique({ where: { id: jobId }, select: { isTest: true } });
+      return t?.isTest === true;
+    }
+    const ownerId =
+      jobType === "DELIVERY"
+        ? (await this.prisma.delivery.findUnique({ where: { id: jobId }, select: { senderId: true } }))?.senderId
+        : jobType === "FOOD_ORDER"
+          ? (await this.prisma.foodOrder.findUnique({ where: { id: jobId }, select: { customerId: true } }))?.customerId
+          : (await this.prisma.errand.findUnique({ where: { id: jobId }, select: { requesterId: true } }))?.requesterId;
+    if (!ownerId) return false;
+    const owner = await this.prisma.user.findUnique({ where: { id: ownerId }, select: { isTestAccount: true } });
+    return owner?.isTestAccount === true;
+  }
+
   async manuallyAssign(jobType: "TRIP" | "DELIVERY" | "FOOD_ORDER" | "ERRAND", jobId: string, driverId: string) {
     const driver = await this.prisma.user.findUnique({
       where: { id: driverId },
-      select: { role: true, kycStatus: true, isActive: true },
+      select: { role: true, kycStatus: true, isActive: true, isTestAccount: true },
     });
     if (!driver || driver.role !== "DRIVER") throw new NotFoundException("Driver not found");
     if (driver.kycStatus !== "APPROVED" || !driver.isActive) {
       throw new BadRequestException("That driver isn't approved/active — can't assign a real job to them");
+    }
+
+    /* MANUAL ASSIGNMENT WAS THE HOLE IN THE REVIEW-FLEET WALL.
+       Every automatic match runs through LocationService.filterEligible,
+       where test jobs go to test drivers and real jobs go to real drivers,
+       exactly, in both directions. This endpoint bypassed that entirely — so
+       a dispatcher could hand a store reviewer's simulated ride to a real
+       person on a real bike in Karachi, or send a paying customer to an
+       account that only exists for Google's review. Both are the failure the
+       segregation exists to prevent. */
+    const jobIsTest = await this.jobBelongsToTestFleet(jobType, jobId);
+    if (driver.isTestAccount !== jobIsTest) {
+      throw new BadRequestException(
+        driver.isTestAccount
+          ? "That's a review-fleet driver — they can only take review-fleet jobs."
+          : "That's a real driver — they can't be assigned a review-fleet job.",
+      );
     }
 
     const now = new Date();

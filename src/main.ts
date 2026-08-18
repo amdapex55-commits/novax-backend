@@ -64,6 +64,16 @@ async function bootstrap() {
   // in someone's browser gets to call this API with their session, so
   // production is required to set it (see config.validation.ts).
   const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
+  /* An empty allowlist means enableCors({}) — which reflects ANY origin and,
+     with credentials, hands a hostile page an authenticated session. That was
+     a warning at boot; a warning in a log nobody reads is not a control. */
+  if (process.env.NODE_ENV === "production") {
+    if (!corsOrigins?.length || corsOrigins.includes("*")) {
+      throw new Error(
+        "CORS_ORIGINS must be an explicit comma-separated allowlist in production — refusing to start with an open CORS policy.",
+      );
+    }
+  }
   app.enableCors(corsOrigins?.length ? { origin: corsOrigins, credentials: true } : {});
 
   // Swagger exposes every route, DTO shape and auth requirement — useful in
