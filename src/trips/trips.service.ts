@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { LocationService } from "../location/location.service";
@@ -263,9 +263,10 @@ export class TripsService {
       // driver in an 8km radius would be a query per candidate on the
       // critical path of a booking, to reorder people who were never going to
       // be picked.
-      const best = await this.rankCandidates(eligible.slice(0, DISPATCH_SHORTLIST));
-      if (best) {
-        await this.offerToDriver(tripId, best);
+      const ranked = await this.rankCandidates(eligible.slice(0, DISPATCH_SHORTLIST), true);
+      if (ranked.length) {
+        // The best few see it together; the first to accept claims it.
+        await this.offerToDrivers(tripId, ranked.slice(0, TripsService.BROADCAST_TO));
         return;
       }
     }
@@ -292,12 +293,26 @@ export class TripsService {
    * Reputation lives on DriverProfile as counters (see the schema comment) so
    * this is one query for the whole shortlist rather than one per driver.
    */
+  /**
+   * Score the shortlist. `all` returns everyone best-first, for the broadcast;
+   * without it, just the single best id, which is what the food, errand and
+   * delivery paths still expect.
+   */
   private async rankCandidates(
     candidates: Array<{ driverId: string; distanceKm: number }>,
-  ): Promise<string | null> {
-    if (candidates.length === 0) return null;
-    if (candidates.length === 1) return candidates[0].driverId;
+    all: true,
+  ): Promise<string[]>;
+  private async rankCandidates(
+    candidates: Array<{ driverId: string; distanceKm: number }>,
+  ): Promise<string | null>;
+  private async rankCandidates(
+    candidates: Array<{ driverId: string; distanceKm: number }>,
+    all = false,
+  ): Promise<string | string[] | null> {
+    if (candidates.length === 0) return all ? [] : null;
+    if (candidates.length === 1) return all ? [candidates[0].driverId] : candidates[0].driverId;
 
+    const scored: Array<{ id: string; score: number }> = [];
     const ids = candidates.map((c) => c.driverId);
     const [profiles, users] = await Promise.all([
       this.prisma.driverProfile.findMany({
@@ -326,8 +341,10 @@ export class TripsService {
         rating: byRating.get(c.driverId) ?? null,
         idleMinutes: idleMinutesSince(p?.lastCompletedAt),
       });
+      scored.push({ id: c.driverId, score });
       if (score > bestScore) { bestScore = score; bestId = c.driverId; }
     }
+    if (all) return scored.sort((a, b) => b.score - a.score).map((x) => x.id);
     return bestId;
   }
 
@@ -377,24 +394,46 @@ export class TripsService {
     }
   }
 
-  private async offerToDriver(tripId: string, driverId: string) {
+  /** How many riders see the same job at once. Three is enough to make a
+   *  pickup feel instant without turning every request into a scramble. */
+  private static readonly BROADCAST_TO = 3;
+
+  /**
+   * Offer one trip to several riders at once.
+   *
+   * WHY THIS REPLACED ONE-AT-A-TIME
+   *
+   * The old dispatch reserved the trip for a single driver, wrote their id on
+   * the row, and waited the full fifteen seconds before trying anyone else.
+   * A rider glancing at their phone at a junction, or simply riding, cost the
+   * customer fifteen seconds of silence — and three declines in a row cost
+   * them forty-five. It also meant a driver's screen was hijacked by a job
+   * they had not asked for.
+   *
+   * Now the top few eligible riders see it together and whoever takes it
+   * first gets it. driverId stays NULL for the whole offer window; it is the
+   * accept that claims the row, which is what makes "two riders cannot take
+   * the same job" true at the database rather than by convention.
+   */
+  private async offerToDrivers(tripId: string, driverIds: string[]) {
     const trip = await this.prisma.trip.update({
       where: { id: tripId },
-      data: { status: "MATCHING", driverId, offerCount: { increment: 1 } },
+      // driverId deliberately NOT set — the trip is unclaimed until accept.
+      data: { status: "MATCHING", driverId: null, offerCount: { increment: 1 } },
     });
 
     // Reputation counters (see the DriverProfile schema comment). Fire and
     // forget: a counter that fails to increment skews a ranking signal by a
     // fraction of a percent, and is never worth failing a dispatch over.
     this.prisma.driverProfile
-      .update({ where: { userId: driverId }, data: { offersSent: { increment: 1 }, lastOfferAt: new Date() } })
+      .updateMany({ where: { userId: { in: driverIds } }, data: { offersSent: { increment: 1 }, lastOfferAt: new Date() } })
       .catch(() => undefined);
 
     // Include fare/fareType so the driver can actually see a rider's
     // proposed price before accepting a BID trip — same info an inDrive
     // driver sees on an incoming offer. fare is a Decimal column; Number()
     // before it leaves this function in a socket payload.
-    this.locationGateway.emitToUser(driverId, "trip:offer", {
+    const payload = {
       tripId,
       expiresInMs: OFFER_TIMEOUT_MS,
       vehicleType: trip.vehicleType,
@@ -412,7 +451,8 @@ export class TripsService {
       distanceKm: trip.distanceKm,
       pickupLabel: trip.pickupLabel,
       dropoffLabel: trip.dropoffLabel,
-    });
+    };
+    for (const id of driverIds) this.locationGateway.emitToUser(id, "trip:offer", payload);
 
     /* THE OFFER IS THE MOST TIME-CRITICAL NOTIFICATION IN THE PRODUCT.
        It expires in 15 seconds, and until now it existed only as a socket
@@ -420,22 +460,30 @@ export class TripsService {
        because they are riding. The offer cascaded away before they saw it,
        which reads to the driver as "this app never gives me jobs".
        Not awaited: a slow push must not eat the offer window. */
-    this.recordEvent(tripId, "OFFERED", { actorId: driverId, actorRole: "DRIVER" });
-
-    void this.notifications.notify(
-      driverId,
-      "driver",
-      "New ride request",
-      trip.fare ? `Rs ${Math.round(Number(trip.fare))} · ${trip.distanceKm?.toFixed(1) ?? "?"} km` : "Tap to view",
-      { type: "trip_offer", tripId },
-    );
+    for (const id of driverIds) {
+      this.recordEvent(tripId, "OFFERED", { actorId: id, actorRole: "DRIVER" });
+      void this.notifications.notify(
+        id,
+        "driver",
+        "New ride request",
+        trip.fare ? `Rs ${Math.round(Number(trip.fare))} · ${trip.distanceKm?.toFixed(1) ?? "?"} km` : "Tap to view",
+        { type: "trip_offer", tripId },
+      );
+    }
 
     // Auto-cascade: if the driver hasn't accepted within the window, treat it
     // like a decline and offer the next-nearest candidate.
+    /* Nobody claimed it inside the window. The trip is still MATCHING with a
+       null driverId, which is exactly the state that says "offered, unclaimed"
+       — so exclude everyone who was shown it and search again. Anyone who
+       explicitly declined is already excluded by declineTrip. */
     setTimeout(async () => {
       const current = await this.prisma.trip.findUnique({ where: { id: tripId } });
-      if (current?.status === "MATCHING" && current.driverId === driverId) {
-        await this.handleDeclineOrTimeout(tripId, driverId);
+      if (current?.status === "MATCHING" && current.driverId === null) {
+        for (const id of driverIds) await this.excludedDriversStore.add("trip", tripId, id);
+        await this.prisma.trip.update({ where: { id: tripId }, data: { status: "REQUESTED" } });
+        await this.escalateIfStuck(tripId);
+        await this.attemptMatch(tripId);
       }
     }, OFFER_TIMEOUT_MS);
   }
@@ -470,16 +518,33 @@ export class TripsService {
     // write one statement. The database decides the winner; count === 0 means
     // this driver lost, which is the same answer the old check gave, just
     // truthfully.
+    /* THIS ONE STATEMENT IS WHY TWO RIDERS CANNOT TAKE THE SAME JOB.
+
+       Several riders are now shown the same trip at once, so the race is no
+       longer theoretical — it is the normal case, every single dispatch. The
+       guard is `driverId: null`: the trip is unclaimed for the whole offer
+       window, and the first accept to reach the database is the one that
+       writes a driverId. Postgres serialises the two updates; the loser
+       matches zero rows and is told plainly.
+
+       Doing this as a read-then-write would hand the same pickup to two
+       riders on a busy evening, and neither would find out until they both
+       arrived. */
     const claimed = await this.prisma.trip.updateMany({
-      where: { id: tripId, status: "MATCHING", driverId },
-      data: { status: "MATCHED", matchedAt: new Date() },
+      where: { id: tripId, status: "MATCHING", driverId: null },
+      data: { status: "MATCHED", driverId, matchedAt: new Date() },
     });
     if (claimed.count === 0) {
-      throw new ForbiddenException("This trip is not awaiting your response");
+      // Lost the race, or the window closed. Not an error the rider caused.
+      throw new ConflictException("Another rider took this one first.");
     }
     const trip = await this.getTripOr404(tripId);
     const updated = trip;
     await this.excludedDriversStore.clear("trip", tripId);
+    /* Everyone else who was shown this job needs their card to go away. A
+       stack of offers that includes one somebody else already took is how a
+       rider learns to stop trusting the stack. */
+    this.locationGateway.server.emit("trip:offerTaken", { tripId, takenBy: driverId });
     this.locationGateway.server.to(`trip:${tripId}`).emit("trip:matched", { tripId, driverId });
     this.recordEvent(tripId, "ACCEPTED", { actorId: driverId, actorRole: "DRIVER" });
     this.locationGateway.emitToUser(trip.riderId, "trip:matched", { tripId, driverId });
@@ -496,11 +561,21 @@ export class TripsService {
 
   async declineTrip(tripId: string, driverId: string) {
     const trip = await this.getTripOr404(tripId);
-    if (trip.status !== "MATCHING" || trip.driverId !== driverId) {
+    /* A broadcast trip has no driverId while it is being offered, so the old
+       `trip.driverId !== driverId` guard rejected every decline. Declining now
+       means "not me" — this rider is excluded and the others keep their card. */
+    if (trip.status !== "MATCHING") {
       throw new ForbiddenException("This trip is not awaiting your response");
     }
-    await this.handleDeclineOrTimeout(tripId, driverId);
-    return { message: "Declined — offering to the next driver" };
+    /* Just exclude this rider. Re-matching here would yank the job away from
+       the other riders who are still looking at it — the timeout is what
+       decides nobody wanted it. */
+    this.recordEvent(tripId, "DECLINED", { actorId: driverId, actorRole: "DRIVER" });
+    await this.excludedDriversStore.add("trip", tripId, driverId);
+    this.prisma.driverProfile
+      .update({ where: { userId: driverId }, data: { offersDeclined: { increment: 1 } } })
+      .catch(() => undefined);
+    return { message: "Declined" };
   }
 
   async markArrived(tripId: string, driverId: string) {
