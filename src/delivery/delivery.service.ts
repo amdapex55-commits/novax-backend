@@ -78,12 +78,31 @@ export class DeliveryService {
   }
 
   private async offerToDriver(deliveryId: string, driverId: string) {
-    await this.prisma.delivery.update({
+    const delivery = await this.prisma.delivery.update({
       where: { id: deliveryId },
       data: { status: "MATCHING", driverId },
     });
 
-    this.locationGateway.emitToUser(driverId, "delivery:offer", { deliveryId, expiresInMs: OFFER_TIMEOUT_MS });
+    /* THE OFFER USED TO CARRY ONLY AN ID.
+       A driver was asked to accept a job in fifteen seconds without being told
+       what it paid, how far it was, or — most importantly — whether they were
+       expected to collect cash from the recipient. COD is the driver's own
+       money at risk until they settle, so it is not a detail to discover after
+       accepting. Everything needed to make the decision now rides with the
+       offer, the same way it does for a ride. */
+    this.locationGateway.emitToUser(driverId, "delivery:offer", {
+      deliveryId,
+      expiresInMs: OFFER_TIMEOUT_MS,
+      fare: delivery.fare ? Number(delivery.fare) : null,
+      codAmount: delivery.codAmount ? Number(delivery.codAmount) : null,
+      distanceKm: delivery.distanceKm,
+      recipientName: delivery.recipientName,
+      parcelNote: delivery.parcelNote,
+      pickupLat: delivery.pickupLat,
+      pickupLng: delivery.pickupLng,
+      dropoffLat: delivery.dropoffLat,
+      dropoffLng: delivery.dropoffLng,
+    });
 
     setTimeout(async () => {
       const current = await this.prisma.delivery.findUnique({ where: { id: deliveryId } });

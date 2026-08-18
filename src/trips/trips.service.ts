@@ -404,7 +404,14 @@ export class TripsService {
       // attractive if the driver can see it while deciding, so it rides in
       // the offer payload alongside the fare.
       tipAmount: trip.tipAmount ? Number(trip.tipAmount) : null,
+      // The LENGTH OF THE TRIP, not the distance to the pickup. The driver app
+      // used to print this as "3.2 km away", which is a different number
+      // entirely and the one a driver actually decides on. Labelled honestly
+      // at the other end now, and the pickup is named so they can judge the
+      // ride they are being asked to take.
       distanceKm: trip.distanceKm,
+      pickupLabel: trip.pickupLabel,
+      dropoffLabel: trip.dropoffLabel,
     });
 
     /* THE OFFER IS THE MOST TIME-CRITICAL NOTIFICATION IN THE PRODUCT.
