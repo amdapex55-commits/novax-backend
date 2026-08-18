@@ -94,7 +94,11 @@ export class LaunchPolicyService {
   };
 
   private readonly hours = {
-    enabled: parseBool(process.env.LAUNCH_HOURS_ENABLED, true),
+    /* OFF by default: Nova Go takes bookings around the clock. The window is
+       kept rather than deleted because it is the right control to have — set
+       LAUNCH_HOURS_ENABLED=true and the guard, the log line and the refusal
+       message all come back. */
+    enabled: parseBool(process.env.LAUNCH_HOURS_ENABLED, false),
     openHour: parseNum(process.env.LAUNCH_OPEN_HOUR, 8),
     closeHour: parseNum(process.env.LAUNCH_CLOSE_HOUR, 22),
     timeZone: process.env.LAUNCH_TIMEZONE ?? "Asia/Karachi",
