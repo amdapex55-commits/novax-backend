@@ -262,18 +262,28 @@ export class UsersService {
 
   /** Everything a reviewer needs, plus what's still missing. The driver's own
    * screen uses `missing` to show a checklist instead of a silent Submit. */
+  /* THREE DOCUMENTS, AND NOTHING WE CANNOT ACT ON.
+     Vehicle registration is gone: in Karachi the bike is very often
+     registered to a father, a brother or the previous owner, so the document
+     failed honest riders and proved nothing about the person in front of us.
+     The vehicle PHOTO stays, because it is what a passenger actually matches
+     against at the kerb.
+     The CNIC back is gone too — the number is on the front, and we ask for
+     the number separately anyway.
+     Payout is NOT required. It is asked for after approval, so listing it
+     here made canSubmit permanently false: the onboarding screen hid the
+     payout fields until approved while the gate demanded them, and no driver
+     could ever submit an application. */
   private static REQUIRED_FOR_REVIEW: Array<{ key: string; label: string }> = [
     { key: "vehicleType", label: "Vehicle type" },
     { key: "vehiclePlate", label: "Number plate" },
     { key: "cnicNumber", label: "CNIC number" },
-    { key: "cnicFrontUrl", label: "CNIC front photo" },
-    { key: "cnicBackUrl", label: "CNIC back photo" },
-    { key: "licenseDocUrl", label: "Driving licence" },
-    { key: "vehicleDocUrl", label: "Vehicle registration" },
+    { key: "cnicFrontUrl", label: "CNIC photo" },
+    { key: "licenseDocUrl", label: "Driving licence photo" },
+    { key: "vehiclePhotoUrl", label: "Photo of your bike" },
     { key: "serviceZone", label: "Service area" },
-    { key: "payoutMethod", label: "Payout method" },
-    { key: "payoutAccountNumber", label: "Payout account" },
-    { key: "emergencyContactPhone", label: "Emergency contact" },
+    { key: "emergencyContactName", label: "Emergency contact name" },
+    { key: "emergencyContactPhone", label: "Emergency contact number" },
   ];
 
   async getOnboardingStatus(userId: string) {
