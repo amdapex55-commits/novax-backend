@@ -50,3 +50,55 @@ describe("TokenDenylistService", () => {
     await expect(makeService({ set }).revoke("user-1", "account deleted")).resolves.toBeUndefined();
   });
 });
+
+/* ---------------------------------------------------------------------------
+   Fail-closed path for money and access.
+
+   The ordinary read deliberately fails OPEN: failing closed on a Redis blink
+   would sign out every driver on the platform, including mid-trip, which is a
+   far larger incident than one revoked session on a device the person already
+   holds. These tests exist to make sure that trade-off stays confined to
+   ordinary traffic and never leaks into the operations revocation exists to
+   stop.
+   --------------------------------------------------------------------------- */
+describe("TokenDenylistService — sensitive actions fail closed", () => {
+  const down = () => {
+    throw new Error("ECONNREFUSED");
+  };
+
+  it("REFUSES a sensitive action when Redis is unreachable", async () => {
+    const svc = makeService({ exists: jest.fn(down) });
+    await expect(svc.assertNotRevokedForSensitiveAction("driver-1", "wallet-withdraw")).rejects.toThrow(
+      /can't verify your session/i,
+    );
+  });
+
+  it("still allows ORDINARY traffic when Redis is unreachable — a trip must not be interrupted", async () => {
+    const svc = makeService({ exists: jest.fn(down) });
+    // The same outage, the same user: normal requests keep working.
+    await expect(svc.isRevoked("driver-1")).resolves.toBe(false);
+  });
+
+  it("refuses a sensitive action for a genuinely revoked session", async () => {
+    const svc = makeService({ exists: jest.fn().mockResolvedValue(1) });
+    await expect(svc.assertNotRevokedForSensitiveAction("driver-1", "wallet-withdraw")).rejects.toThrow(
+      /no longer valid/i,
+    );
+  });
+
+  it("permits a sensitive action for a live session", async () => {
+    const svc = makeService({ exists: jest.fn().mockResolvedValue(0) });
+    await expect(svc.assertNotRevokedForSensitiveAction("driver-1", "wallet-withdraw")).resolves.toBeUndefined();
+  });
+
+  it("reports degradation so an outage is observable, and clears it on recovery", async () => {
+    const exists = jest.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const svc = makeService({ exists });
+    expect(svc.isDegraded()).toBe(false);
+    await svc.isRevoked("driver-1");
+    expect(svc.isDegraded()).toBe(true);
+    exists.mockResolvedValue(0);
+    await svc.isRevoked("driver-1");
+    expect(svc.isDegraded()).toBe(false);
+  });
+});
